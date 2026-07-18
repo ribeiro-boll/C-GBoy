@@ -3,40 +3,16 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 #include <unistd.h>
+#include <SDL2/SDL.h>
+// bits    mais clara
+// 00    Cor 0: #9BBC0F  VVV
+// 01    Cor 1: #8BAC0F  |||
+// 10    Cor 2: #306230  VVV
+// 11    Cor 3: #0F380F
+//   mais escura
 
-// ------------------ end debug   -----------
-
-typedef struct Reg {
-    bool is_halted;
-    bool only_waiting_for_interrupt_cond;
-    bool halt_bug;
-    bool tima_is_on;
-    bool enable_interrupt;
-    bool IME;
-
-    uint8_t lower_byte;
-    uint8_t upper_byte;
-
-    uint8_t curr_operation;
-
-    uint16_t SP;
-    uint16_t PC;
-
-    uint8_t A;
-    uint8_t B;
-    uint8_t C;
-    uint8_t D;
-    uint8_t E;
-    uint8_t H;
-    uint8_t L;
-
-    uint8_t F; // registrador de flags, apenas usa os 4 primeiros bits ex 1011 0000
-
-    int contador_ciclos;
-    int contador_ciclos_div;
-    int contador_ciclos_tima;
-} GB_reg;
 
 typedef struct Memory {
     int game_rom_lenght;
@@ -51,14 +27,87 @@ typedef struct Memory {
     uint8_t HRAM[0x007F];    // inicia -> 0xFF80 | final ->0xFFFE
     uint8_t IE;              // endereço -> 0xFFFF
 } GB_Memory;
+uint32_t colors[] = {0x9BBC0F,0x8BAC0F,0x306230,0x0F380F};
 
+
+
+typedef struct Reg {
+    bool is_halted;
+    bool only_waiting_for_interrupt_cond;
+    bool halt_bug;
+    bool tima_is_on;
+    bool enable_interrupt;
+    bool IME;
+
+    uint16_t SP;
+    uint16_t PC;
+
+    uint8_t A;
+    uint8_t B;
+    uint8_t C;
+    uint8_t D;
+    uint8_t E;
+    uint8_t H;
+    uint8_t L;
+
+    uint8_t F; // registrador de flags, apenas usa os 4 primeiros bits ex 1011 0000
+
+    uint16_t contador_ciclos;
+    uint16_t contador_ciclos_div;
+    uint16_t contador_ciclos_tima;
+} GB_reg;
+
+#define REG_LCDC 0xFF40 // FF40
+#define REG_STAT 0xFF41 // FF41
+#define REG_SCY  0xFF42 // FF42
+#define REG_SCX  0xFF43 // FF43
+#define REG_LY   0xFF44 // FF44
+#define REG_LYC  0xFF45 // FF45
+#define REG_BGP  0xFF47 // FF47
+#define REG_WY   0xFF4A // FF4A
+#define REG_WX   0xFF4B // FF4B
+#define REG_IF   0xFF0F // FF0F
+
+typedef struct Pixel_coords {
+    uint8_t x;
+    uint8_t y;
+} Pixel_coords;
+
+typedef struct GB_PPU {
+    uint8_t current_y_from_tiles;
+    uint8_t current_LY;
+    uint8_t tile_data[32][32][16];
+    uint8_t LCDscreen[144][160];
+    uint8_t background[256][256];
+    uint8_t window[256][256];
+    bool frame_ready;
+    Pixel_coords window_top_left;
+    uint16_t contador_ciclos;
+} GB_PPU;
+
+bool cond_start_vblank = false;
+bool cond_ja_foi_vblank = false;
+
+bool cond_start_STAT = false;
+bool cond_ja_foi_STAT = false;
+
+bool cond_estado_3_da_ppu_foi_mudado = true;
+bool cond_estado_2_da_ppu_foi_mudado = true;
+bool cond_estado_1_da_ppu_foi_mudado = true;
+bool cond_estado_0_da_ppu_foi_mudado = true;
+
+GB_PPU ppu;
 GB_reg cpu;
 GB_Memory memory;
 
+SDL_Window *screen = NULL;
+SDL_Surface *screenSurface = NULL;
+SDL_Renderer *renderer = NULL;
+
 // ------------------ begin debug -----------
 
-
-bool cond_debug = true;
+bool cond_first_run = true;
+bool cond_debug = false;
 int nmbr_tests = 14;
 
 #define BASE 0x0100
@@ -69,14 +118,15 @@ typedef struct {
     uint8_t code[MAX_PROG_SIZE];
 } TestProgram;
 
+
+
 // ============================================================================
 // Testes extras pro emulador — cobrem o que faltava no seu conjunto original.
 // Sem nenhuma instrução do prefixo CB (rotates/shifts/BIT/SET/RES em r8),
 // já que você disse que essa tabela ainda não foi implementada.
 //
-// Todo valor de "estado final esperado" abaixo foi calculado rodando cada
-// programa num interpretador SM83 escrito à parte (não usei seu código pra
-// gerar isso), então é gabarito independente, não "o que seu emu daria".
+// Todos os valores de "estado final esperado" abaixo foi calculado rodando cada
+// programa num interpretador SM83 escrito à parte, então é gabarito independente, não "o que seu emu daria".
 // ============================================================================
 
 TestProgram tests_extra[] = {
@@ -496,100 +546,287 @@ TestProgram tests_extra[] = {
 
 };
 
+// ------------------ end debug   -----------
 
 void load_memory(TestProgram program) {
+    if (!cond_first_run) {
+        free(memory.game_rom);
+        cond_first_run = false;
+    }
     memory = (GB_Memory){0};
     memory.game_rom = malloc(sizeof(uint8_t)*16 * 1024);
     memcpy(memory.game_rom+0x0100,program.code,program.size);
     memory.game_rom_lenght = program.size;
 }
 
+//______________________________________
+uint8_t read_noMBC(uint16_t endereco) {
+    return memory.game_rom[endereco];
+}
+
+uint8_t read_MBC1(uint16_t endereco) {
+    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
+}
+
+uint8_t read_MBC2(uint16_t endereco) {
+    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
+}
+
+uint8_t read_MBC3(uint16_t endereco) {
+    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
+}
+
+uint8_t read_from_memory_8bit(uint16_t address) {
+    // if (address == 0xFF44 && cpu.PC == 0x2828) return 0x91;
+    // if (address == 0xFF44) return 0x94;
+    if (address >= 0x0000 && 0x3FFF >= address) return memory.game_rom[address];
+    if (address >= 0x4000  && 0x7FFF >= address) {
+        switch (memory.MBC_type) {
+            case 0x00:  return read_noMBC(address);
+            case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
+            case 0x02:  return read_MBC1(address);
+            case 0x03:  return read_MBC1(address);
+        }
+    }
+    if (address >= 0x8000 && 0x9FFF >= address) return memory.VRAM[address-0x8000];
+    if (address >= 0xA000 && 0xBFFF >= address) return memory.cartRAM[address - 0xA000];
+    if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
+    if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
+    if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
+    //if (address == 0xFF00) return 0b00001111;
+    if (address >= 0xFF00 && 0xFF7F >= address) return memory.IO[address - 0xFF00];
+    if (address >= 0xFF80 && 0xFFFE >= address) return memory.HRAM[address - 0xFF80];
+    if (address == 0xFFFF) return memory.IE;
+    return 0;
+}
+void write_into_memory_8bit(uint16_t address, uint8_t variable) {
+    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
+    //if (address >= 0x4000  && 0x7FFF >= address) {
+         //switch (memory.MBC_type) {
+         //    case 0x00: memory.game_rom[address] = variable;
+         //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
+         //     case 0x02:  return read_MBC1(address);
+         //     case 0x03:  return read_MBC1(address);
+        //}
+    //}
+
+    if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
+    else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
+    else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
+    else if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
+    else if (address >= 0xFF00 && 0xFF7F >= address) {
+        //if (address == 0xFF04) memory.IO[4] = 0;
+        memory.IO[address - 0xFF00] = variable;
+    }
+    else if (address >= 0xFF80 && 0xFFFE >= address) memory.HRAM[address - 0xFF80] = variable;
+    else if (address == 0xFFFF) memory.IE = variable;
+}
+
+/*
+FF0F — IF: Interrupt flag
+When an interrupt request signal (some internal wire going from the PPU/APU/… to the CPU) changes from low to high, the corresponding bit in the IF register becomes set. For example, bit 0 becomes set when the PPU enters the VBlank period.
+Any set bits in the IF register are only requesting an interrupt. The actual execution of the interrupt handler happens only if both the IME flag and the corresponding bit in the IE register are set; otherwise the interrupt “waits” until both IME and IE allow it to be serviced.
+Since the CPU automatically sets and clears the bits in the IF register, it is usually not necessary to write to the IF register. However, the user may still do that in order to manually request (or discard) interrupts. Just like real interrupts, a manually requested interrupt isn’t serviced unless/until IME and IE allow it.
+
+ORDEM:   7 6 5 4 3 2 1 0
+         | | | | | | | |
+         V V V V V V V V
+BITS   0b0 0 0 0 0 0 0 0
+
+0 - VBlank (Read/Write): Controls whether the VBlank interrupt handler is being requested.
+1 - LCD (Read/Write): Controls whether the LCD interrupt handler is being requested.
+2 - Timer (Read/Write): Controls whether the Timer interrupt handler is being requested.
+3 - Serial (Read/Write): Controls whether the Serial interrupt handler is being requested.
+4 - Joypad (Read/Write): Controls whether the Joypad interrupt handler is being requested.
+5 - blank/nothing
+6 - blank/nothing
+7 - blank/nothing
+ */
+void set_interrupt(int bit, bool true_or_false) {
+    uint8_t interrupt_register = read_from_memory_8bit(0xFF0F);
+    switch (bit) {
+        case 0: write_into_memory_8bit(0xFF0F,((true_or_false)? interrupt_register | 0b00000001 : interrupt_register & 0b11111110)); break;
+        case 1: write_into_memory_8bit(0xFF0F,((true_or_false)? interrupt_register | 0b00000010 : interrupt_register & 0b11111101)); break;
+        case 2: write_into_memory_8bit(0xFF0F,((true_or_false)? interrupt_register | 0b00000100 : interrupt_register & 0b11111011)); break;
+        case 3: write_into_memory_8bit(0xFF0F,((true_or_false)? interrupt_register | 0b00001000 : interrupt_register & 0b11110111)); break;
+        case 4: write_into_memory_8bit(0xFF0F,((true_or_false)? interrupt_register | 0b00010000 : interrupt_register & 0b11101111)); break;
+    }
+}
+
+
+/*
+LCDC is the main LCD Control register. Its bits toggle what elements are displayed on the screen, and how.
+
+ORDEM:   7 6 5 4 3 2 1 0
+         | | | | | | | |
+         V V V V V V V V
+BITS   0b0 0 0 0 0 0 0 0
+
+7 - LCD & PPU enable    | LCD & PPU enable: 0 = Off; 1 = On
+6 - Window tile map     | Window tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
+5 - Window enable       | Window enable: 0 = Off; 1 = On
+4 - BG & Window tiles   | BG & Window tile data area: 0 = 8800–97FF; 1 = 8000–8FFF
+3 - BG tile map         | BG tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
+2 - OBJ size            | OBJ size: 0 = 8×8; 1 = 8×16
+1 - OBJ enable          | OBJ enable: 0 = Off; 1 = On
+0 - BG & Window enable  | BG & Window enable / priority [Different meaning in CGB Mode]: 0 = Off; 1 = On
+ */
+bool check_LCDC(int bit_a_ser_checado){
+    bool value = false;
+    switch (bit_a_ser_checado) {
+        case 0: value = ((read_from_memory_8bit(REG_LCDC) & 0b00000001) != 0); break;
+        case 1: value = ((read_from_memory_8bit(REG_LCDC) & 0b00000010) != 0); break;
+        case 2: value = ((read_from_memory_8bit(REG_LCDC) & 0b00000100) != 0); break;
+        case 3: value = ((read_from_memory_8bit(REG_LCDC) & 0b00001000) != 0); break;
+        case 4: value = ((read_from_memory_8bit(REG_LCDC) & 0b00010000) != 0); break;
+        case 5: value = ((read_from_memory_8bit(REG_LCDC) & 0b00100000) != 0); break;
+        case 6: value = ((read_from_memory_8bit(REG_LCDC) & 0b01000000) != 0); break;
+        case 7: value = ((read_from_memory_8bit(REG_LCDC) & 0b10000000) != 0); break;
+    }
+    return value;
+}
+
+
+//FF44 — LY: LCD Y coordinate [read-only]
+//LY indicates the current horizontal line, which might be about to be drawn, being drawn, or just been drawn. LY can hold any value from 0 to 153, with values from 144 to 153 indicating the VBlank period.
+void update_LY(){
+    write_into_memory_8bit(0xFF44,ppu.current_LY );
+}
+
+/*
+There are various sources which can trigger this interrupt to occur as described in STAT register ($FF41).
+The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on.
+A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
+
+ORDEM:   7 6 5 4 3 2 1 0
+         | | | | | | | |
+         V V V V V V V V
+BITS   0b0 0 0 0 0 0 0 0
+
+7   - blank/nothing
+6   -    LYC int select (Read/Write): If set, selects the LYC == LY cond   for the STAT interrupt.
+5   - Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
+4   - Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
+3   - Mode 0 int select (Read/Write): If set, selects the Mode 0 condition for the STAT interrupt.
+2   - LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
+1,0 - PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
+
+*/
+void set_STAT_mode(int bit_a_ser_mudado, bool on_or_off) {
+    switch (bit_a_ser_mudado) {
+        case 3: (on_or_off)? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b00001000)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b11110111)); break;
+        case 4: (on_or_off)? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b00010000)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b11101111)); break;
+        case 5: (on_or_off)? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b00100000)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b11011111)); break;
+        case 6: (on_or_off)? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b01000000)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b10111111)); break;
+    }
+}
+/*
+There are various sources which can trigger this interrupt to occur as described in STAT register ($FF41).
+The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on.
+A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
+
+ORDEM:   7 6 5 4 3 2 1 0
+         | | | | | | | |
+         V V V V V V V V
+BITS   0b0 0 0 0 0 0 0 0
+
+7   - blank/nothing
+6   -    LYC int select (Read/Write): If set, selects the LYC == LY cond   for the STAT interrupt.
+5   - Mode 2 int select (Read/Write): If set, selects the Mode 2 condition for the STAT interrupt.
+4   - Mode 1 int select (Read/Write): If set, selects the Mode 1 condition for the STAT interrupt.
+3   - Mode 0 int select (Read/Write): If set, selects the Mode 0 condition for the STAT interrupt.
+2   - LYC == LY (Read-only): Set when LY contains the same value as LYC; it is constantly updated.
+1,0 - PPU mode (Read-only): Indicates the PPU’s current status. Reports 0 instead when the PPU is disabled.
+
+*/
+bool get_STAT_mode(int bit) {
+    switch (bit) {
+        case 3: return (read_from_memory_8bit(REG_STAT) & 0b00001000)? true : false;
+        case 4: return (read_from_memory_8bit(REG_STAT) & 0b00010000)? true : false;
+        case 5: return (read_from_memory_8bit(REG_STAT) & 0b00100000)? true : false;
+        case 6: return (read_from_memory_8bit(REG_STAT) & 0b01000000)? true : false;
+    }
+}
+
+void set_ppu_mode(uint8_t mode) {
+    uint8_t temp_value = read_from_memory_8bit(REG_STAT);
+    switch (mode) {
+        case 0: write_into_memory_8bit(REG_STAT,(temp_value & 0b11111100)); break;
+        case 1: (temp_value |= 0b00000001); (temp_value &= 0b11111101); write_into_memory_8bit(REG_STAT, temp_value); break;
+        case 2: (temp_value |= 0b00000010); (temp_value &= 0b11111110); write_into_memory_8bit(REG_STAT, temp_value); break;
+        case 3: write_into_memory_8bit(REG_STAT,(temp_value | 0b00000011)); break;
+    }
+}
+
+bool compare_lyc_ly() {
+    if (ppu.current_LY == read_from_memory_8bit(0xFF45) && get_STAT_mode(6)) {
+        return true;
+    }
+    return false;
+}
+/*
+FF45 — LYC: LY compare
+The Game Boy constantly compares the value of the LYC and LY registers. When both values are identical, the “LYC=LY” flag in the STAT register is set, and (if enabled) a STAT interrupt is requested.
+ */
+
+
 void check_cycle_counter() {
-    while (cpu.contador_ciclos_div >=256) {
+    while (cpu.contador_ciclos_div >= 256) {
         cpu.contador_ciclos_div -= 256;
         memory.IO[0x04] +=1; // div
     }
     if (memory.IO[0x07] & 0b00000100) {
         switch (memory.IO[0x07]) { // TIMA
             case 0b00000101: while (cpu.contador_ciclos_tima >=   16) {
-                if (memory.IO[0x05] == 0xFF) {
-                    memory.IO[0x05] = memory.IO[0x06];
+                if (read_from_memory_8bit(0xFF05) == 0xFF) {
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF06));
                     cpu.contador_ciclos_tima -= 16;
-                    memory.IO[0x0F] |= 0b00000100;
+                    set_interrupt(2,true);
                 }
                 else {
                     cpu.contador_ciclos_tima -= 16;
-                    memory.IO[0x05]+=1;
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF05) + 1);
                 }
-            }
-            case 0b00000110: if (cpu.contador_ciclos_tima >=   64) {
-                if (memory.IO[0x05] == 0xFF) {
-                    memory.IO[0x05] = memory.IO[0x06];
+            }break;
+            case 0b00000110: while (cpu.contador_ciclos_tima >=   64) {
+                if (read_from_memory_8bit(0xFF05) == 0xFF) {
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF06));
                     cpu.contador_ciclos_tima -= 64;
-                    memory.IO[0x0F] |= 0b00000100;
+                    set_interrupt(2,true);
                 }
                 else {
                     cpu.contador_ciclos_tima -= 64;
-                    memory.IO[0x05]+=1;
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF05) + 1);
                 }
-            }
-            case 0b00000111: if (cpu.contador_ciclos_tima >=  256) {
-                if (memory.IO[0x05] == 0xFF) {
-                    memory.IO[0x05] = memory.IO[0x06];
+            }break;
+            case 0b00000111: while (cpu.contador_ciclos_tima >=  256) {
+                if (read_from_memory_8bit(0xFF05) == 0xFF) {
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF06));
                     cpu.contador_ciclos_tima -= 256 ;
-                    memory.IO[0x0F] |= 0b00000100;
+                    set_interrupt(2,true);
                 }
                 else {
                     cpu.contador_ciclos_tima -= 256;
-                    memory.IO[0x05]+=1;
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF05) + 1);
                 }
-            }
-            case 0b00000100: if (cpu.contador_ciclos_tima >= 1024) {
-                if (memory.IO[0x05] == 0xFF) {
-                    memory.IO[0x05] = memory.IO[0x06];
+            }break;
+            case 0b00000100: while (cpu.contador_ciclos_tima >= 1024) {
+                if (read_from_memory_8bit(0xFF05) == 0xFF) {
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF06));
                     cpu.contador_ciclos_tima -= 1024;
-                    memory.IO[0x0F] |= 0b00000100;
+                    set_interrupt(2,true);
                 }
                 else {
                     cpu.contador_ciclos_tima -= 1024;
-                    memory.IO[0x05]+=1;
+                    write_into_memory_8bit(0xFF05, read_from_memory_8bit(0xFF05) + 1);
                 }
-            }
+            }break;
         }
 
     }
 }
-void incrementar_ciclos(uint8_t ciclos) {
-    cpu.contador_ciclos_div+= ciclos;
-    cpu.contador_ciclos_tima+= ciclos;
-}
-void push_into_stack_16bit(uint8_t upper_byte, uint8_t lower_byte) {
-    cpu.SP--;
-    memory.HRAM[cpu.SP - 0xFF80] = upper_byte;
-    cpu.SP--;
-    memory.HRAM[cpu.SP - 0xFF80] = lower_byte;
-}
 
-void pop_from_stack_to_register_16bit(uint8_t *upper_byte, uint8_t *lower_byte, bool cond_AF) {
-    *lower_byte = memory.HRAM[cpu.SP - 0xFF80];
-    cpu.SP++;
-    if (cond_AF) {
-        *lower_byte = *lower_byte & 0xF0;
-    }
-    *upper_byte = memory.HRAM[cpu.SP - 0xFF80];
-    cpu.SP++;
-}
-
-uint16_t pop_from_stack_for_emulator_use_16bit() {
-    uint8_t lower_byte, upper_byte;
-    lower_byte = memory.HRAM[cpu.SP - 0xFF80];
-    cpu.SP++;
-    upper_byte = memory.HRAM[cpu.SP - 0xFF80];
-    cpu.SP++;
-    return (((uint16_t)(upper_byte)) << 8) | (lower_byte);
-}
-
-//______________________________________
+//__________________________________________
 bool is_Z_flag_up() {
     return cpu.F & 0b10000000? true:false;
 }
@@ -619,21 +856,9 @@ void set_C_flag_up(bool up_or_down) {
     if (up_or_down) cpu.F = cpu.F | 0b00010000;
     else cpu.F = cpu.F & 0b11101111;
 }
+
 //______________________________________
-void jump_to_address(uint16_t address) {
-    cpu.PC = address;
-}
-void jump_relative(int8_t value) {
-    cpu.PC += ((int8_t)value)+2;
-}
-void call_to_address(uint16_t address) {
-    push_into_stack_16bit((uint8_t)((cpu.PC & 0xFF00) >> 8), (uint8_t)(cpu.PC & 0x00FF));
-    jump_to_address(address);
-}
-void return_to_call_address() {
-    cpu.PC = pop_from_stack_for_emulator_use_16bit();
-}
-//______________________________________
+
 void start_game(char* game_adress) {
     int game_rom_lenght = 0;
     FILE *fl = fopen(game_adress, "rb");
@@ -650,50 +875,13 @@ void start_game(char* game_adress) {
     memory.MBC_type = memory.game_rom[0x0147];
     fclose(fl);
 }
-//______________________________________
-uint8_t read_noMBC(uint16_t endereco) {
-    return memory.game_rom[endereco];
-}
-
-uint8_t read_MBC1(uint16_t endereco) {
-    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
-}
-
-uint8_t read_MBC2(uint16_t endereco) {
-    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
-}
-
-uint8_t read_MBC3(uint16_t endereco) {
-    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
-}
-
-uint8_t read_from_memory_8bit(uint16_t address) {
-    if (address >= 0x0000 && 0x3FFF >= address) return memory.game_rom[address];
-    if (address >= 0x4000  && 0x7FFF >= address) {
-        switch (memory.MBC_type) {
-            case 0x00:  return read_noMBC(address);
-            case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-            case 0x02:  return read_MBC1(address);
-            case 0x03:  return read_MBC1(address);
-        }
-    }
-    if (address >= 0x8000 && 0x9FFF >= address) return memory.VRAM[address-0x8000];
-    if (address >= 0xA000 && 0xBFFF >= address) return memory.cartRAM[address - 0xA000];
-    if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
-    if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
-    if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
-    if (address >= 0xFF00 && 0xFF7F >= address) return memory.IO[address - 0xFF00];
-    if (address >= 0xFF80 && 0xFFFE >= address) return memory.HRAM[address - 0xFF80];
-    if (0xFFFF == address) return memory.IE;
-    return 0;
-}
 
 //______________________________________
+
 int get_opcode_row(uint8_t opcode) {
     uint8_t front_nibble = (opcode & 0xf0);
     return front_nibble;
 }
-
 int get_opcode_collum(uint8_t opcode) {
     uint8_t back_nibble = (opcode & 0x0f);
     return back_nibble;
@@ -702,7 +890,9 @@ uint16_t extract_adress(uint8_t upper_byte, uint8_t lower_byte) {
     uint16_t address = ((uint16_t)(upper_byte << 8) | (lower_byte));
     return address;
 }
+
 //______________________________________
+
 uint8_t update_comparator_AND_8bit_register(uint8_t *target, uint8_t variable) {
     ((*target & variable) == 0) ? set_Z_flag_up(true) : set_Z_flag_up(false);
     set_N_flag_up(false);
@@ -732,9 +922,11 @@ void update_comparator_CP_8bit_register(uint8_t target, uint8_t variable) {
     set_N_flag_up(true);
     (((target & 0x0F) < ((variable & 0x0F)))) ? set_H_flag_up(true) : set_H_flag_up(false);
     (((target & 0xFF) < ((variable & 0xFF)))) ? set_C_flag_up(true) : set_C_flag_up(false);
-
+    //printf("\ntarget: 0x%02x | comparator: 0x%02x\n",target, variable);
 }
+
 //______________________________________
+
 uint16_t update_decrement_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte, uint8_t decrement) {
     uint16_t target_hex = extract_adress(*upper_byte, *lower_byte);
     uint16_t result = (uint16_t)(((uint16_t)target_hex - decrement) % (0x10000));
@@ -750,7 +942,6 @@ void update_increment_SP_e8(int8_t e8) {
     (((old_sp & 0x0F) + (e8 & 0x0F)) > 0x0F) ? set_H_flag_up(true) : set_H_flag_up(false);
     (((old_sp & 0xFF) + (e8 & 0xFF)) > 0xFF) ? set_C_flag_up(true) : set_C_flag_up(false);
 }
-
 uint8_t update_increment_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte, uint16_t increment, bool cond_inc, bool carry_cond) {
     uint16_t target_hex = extract_adress(*upper_byte, *lower_byte);
     uint8_t carry = 0;
@@ -821,25 +1012,107 @@ void set_8bit_register(char letter_representing_register, uint8_t variable) {
         case 'L': cpu.L = variable; break;
     }
 }
-//____________________________________________________
-void write_into_memory_8bit(uint16_t address, uint8_t variable) {
-    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
-    //if (address >= 0x4000  && 0x7FFF >= address) {
-         //switch (memory.MBC_type) {
-         //    case 0x00: memory.game_rom[address] = variable;
-         //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-         //     case 0x02:  return read_MBC1(address);
-         //     case 0x03:  return read_MBC1(address);
-        //}
-    //}
-    if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
-    if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
-    if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
-    if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
-    if (address >= 0xFF00 && 0xFF7F >= address) memory.IO[address - 0xFF00] = variable;
-    if (address >= 0xFF80 && 0xFFFE >= address) memory.HRAM[address - 0xFF80] = variable;
-    if (address == 0xFFFF) memory.IE = variable;
+
+//______________________________________
+
+void push_into_stack_16bit(uint8_t upper_byte, uint8_t lower_byte) {
+    cpu.SP--;
+    write_into_memory_8bit(cpu.SP, upper_byte);
+    cpu.SP--;
+    write_into_memory_8bit(cpu.SP, lower_byte);
 }
+void pop_from_stack_to_register_16bit(uint8_t *upper_byte, uint8_t *lower_byte, bool cond_AF) {
+    *lower_byte = read_from_memory_8bit(cpu.SP);
+    cpu.SP++;
+    if (cond_AF) {
+        *lower_byte = *lower_byte & 0xF0;
+    }
+    *upper_byte = read_from_memory_8bit(cpu.SP);
+    cpu.SP++;
+}
+uint16_t pop_from_stack_for_emulator_use_16bit() {
+    uint8_t lower_byte, upper_byte;
+    lower_byte = read_from_memory_8bit(cpu.SP);
+    cpu.SP++;
+    upper_byte = read_from_memory_8bit(cpu.SP);
+    cpu.SP++;
+    return (((uint16_t)(upper_byte)) << 8) | (lower_byte);
+}
+
+//______________________________________
+
+void jump_to_address(uint16_t address) {
+    cpu.PC = address;
+}
+void jump_relative(int8_t value) {
+    cpu.PC += ((int8_t)value)+2;
+}
+void call_to_address(uint16_t address) {
+    push_into_stack_16bit((uint8_t)((cpu.PC & 0xFF00) >> 8), (uint8_t)(cpu.PC & 0x00FF));
+    jump_to_address(address);
+}
+void return_to_call_address() {
+    cpu.PC = pop_from_stack_for_emulator_use_16bit();
+}
+/*
+0xFF04 DIV   → IO[0x04]
+0xFF05 TIMA  → IO[0x05]
+0xFF06 TMA   → IO[0x06]
+0xFF07 TAC   → IO[0x07]
+0xFF0F IF    → IO[0x0F]
+0xFFFF IE    → memory.IE
+
+
+bit 0 → VBlank   → vetor 0x0040 → maior prioridade
+bit 1 → LCD STAT → vetor 0x0048
+bit 2 → Timer    → vetor 0x0050
+bit 3 → Serial   → vetor 0x0058
+bit 4 → Joypad   → vetor 0x0060 → menor prioridade
+*/
+bool check_if_is_interrupted(bool only_check_if_has_interruption) {
+    if ((read_from_memory_8bit(0xFF0F) & 0b00000001) && (memory.IE & 0b00000001)) { // IME, IF, IE
+        if (!only_check_if_has_interruption) {
+            set_interrupt(0,false);
+            cpu.IME = false;
+            call_to_address(0x0040);
+        }
+        return true;
+    }
+    if ((read_from_memory_8bit(0xFF0F) & 0b00000010) && (memory.IE & 0b00000010)) { // IME, IF, IE
+        if (!only_check_if_has_interruption) {
+            set_interrupt(1,false);
+            cpu.IME = false;
+            call_to_address(0x0048);
+        }
+        return true;
+    }
+    if ((read_from_memory_8bit(0xFF0F) & 0b00000100) && (memory.IE & 0b00000100)) { // IME, IF, IE
+        if (!only_check_if_has_interruption) {
+            set_interrupt(2,false);
+            cpu.IME = false;
+            call_to_address(0x0050);
+        }
+        return true;
+    }
+    if ((read_from_memory_8bit(0xFF0F) & 0b00001000) && (memory.IE & 0b00001000)) { // IME, IF, IE
+        if (!only_check_if_has_interruption) {
+            set_interrupt(3,false);
+            cpu.IME = false;
+            call_to_address(0x0058);
+        }
+        return true;
+    }
+    if ((read_from_memory_8bit(0xFF0F) & 0b00010000) && (memory.IE & 0b00010000)) { // IME, IF, IE
+        if (!only_check_if_has_interruption) {
+            set_interrupt(4,false);
+            cpu.IME = false;
+            call_to_address(0x0060);
+        }
+        return true;
+    }
+    return false;
+}
+
 //____________________________________________________
 void set_16bit_register(char letter_double_register_high_byte, char letter_double_register_lower_byte, uint16_t variable) {
     if (letter_double_register_high_byte == 'B' && letter_double_register_lower_byte == 'C') {
@@ -856,64 +1129,513 @@ void set_16bit_register(char letter_double_register_high_byte, char letter_doubl
     }
 }
 
-/*
-0xFF04 DIV   → IO[0x04]
-0xFF05 TIMA  → IO[0x05]
-0xFF06 TMA   → IO[0x06]
-0xFF07 TAC   → IO[0x07]
-0xFF0F IF    → IO[0x0F]
-0xFFFF IE    → memory.IE
+// reg = ponteiro do registrador
+// char left_or_right => L = left shift | R = right shift
+// bool cond_carry    => true = include carry "RL" | false = does not include carry "RLC"
+void rotate_register(uint8_t* reg, char left_or_right, bool cond_carry_cond) {
+    uint8_t old_reg_value = *reg;
+    set_H_flag_up(false);
+    set_N_flag_up(false);
+    if (left_or_right == 'L') {
+        *reg = *reg<<1;
+        if (cond_carry_cond) {
+            if (is_C_flag_up()) {
+                set_C_flag_up(false);
+                *reg |= 0b1;
+            }
+            (old_reg_value & 0b10000000)? set_C_flag_up(true) : set_C_flag_up(false);
+        }
+        else {
+            if (old_reg_value & 0b10000000) {
+                set_C_flag_up(true);
+                *reg |= 0b1;
+            }
+            else set_C_flag_up(false);
+        }
+    }
+    else if (left_or_right == 'R') {
+        *reg = *reg>>1;
+        if (cond_carry_cond) {
+            if (is_C_flag_up()) {
+                set_C_flag_up(false);
+                *reg |= 0b10000000;
+            }
+            (old_reg_value & 0b1)? set_C_flag_up(true) : set_C_flag_up(false);
+        }
+        else {
+            if (old_reg_value & 0b1) {
+                set_C_flag_up(true);
+                *reg |= 0b10000000;
+            }
+            else set_C_flag_up(false);
+        }
+    }
+    (*reg == 0)? set_Z_flag_up(true) : set_Z_flag_up(false);
+}
 
+void shift_register(uint8_t* reg, char left_or_right, bool is_logical) {
+    set_H_flag_up(false);
+    set_N_flag_up(false);
+    if (left_or_right == 'L'){
+        if (*reg & 0b10000000) set_C_flag_up(true);
+        else set_C_flag_up(false);
+        *reg = *reg << 1;
+    }
+    else {
+        if (*reg & 0b1) set_C_flag_up(true);
+        else set_C_flag_up(false);
+        if (!is_logical) {
+            *reg = *reg >> 1;
+            *reg |=0b10000000;
+        }
+        else *reg = *reg >> 1;
+    }
+    (*reg == 0)? set_Z_flag_up(true) : set_Z_flag_up(false);
+}
 
-bit 0 → VBlank   → vetor 0x0040 → maior prioridade
-bit 1 → LCD STAT → vetor 0x0048
-bit 2 → Timer    → vetor 0x0050
-bit 3 → Serial   → vetor 0x0058
-bit 4 → Joypad   → vetor 0x0060 → menor prioridade
-*/
+void swap_nibbles(uint8_t* reg) {
+    set_C_flag_up(false);
+    set_H_flag_up(false);
+    set_N_flag_up(false);
+    uint8_t lower_nibble = *reg & 0x0F;
+    uint8_t upper_nibble = *reg & 0xF0;
+    *reg = ((lower_nibble<<4) | (upper_nibble >> 4));
+    (*reg == 0)? set_Z_flag_up(true) : set_Z_flag_up(false);
+}
 
-bool check_if_is_interrupted(bool only_check_if_has_interruption) {
-    if ((memory.IO[0x0F] & 0b00000001) && (memory.IE & 0b00000001)) { // IME, IF, IE
-        if (!only_check_if_has_interruption) {
-            memory.IO[0x0F] &= 0b11111110;
-            cpu.IME = false;
-            call_to_address(0x0040);
-        }
-        return true;
+void bit_opcode(uint8_t* reg, int bit) {
+    set_H_flag_up(true);
+    set_N_flag_up(false);
+    switch (bit) {
+        case 0: (*reg & 0b1)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 1: (*reg & 0b10)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 2: (*reg & 0b100)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 3: (*reg & 0b1000)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 4: (*reg & 0b10000)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 5: (*reg & 0b100000)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 6: (*reg & 0b1000000)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
+        case 7: (*reg & 0b10000000)? set_Z_flag_up(false) : set_Z_flag_up(true); break;
     }
-    if ((memory.IO[0x0F] & 0b00000010) && (memory.IE & 0b00000010)) { // IME, IF, IE
-        if (!only_check_if_has_interruption) {
-            memory.IO[0x0F] &= 0b11111101;
-            cpu.IME = false;
-            call_to_address(0x0048);
+}
+
+void flip_bit_opcode(uint8_t* reg, int bit, bool cond_flip_on) {
+    if (cond_flip_on) {
+        switch (bit) {
+            case 0: *reg |= 0b00000001; break;
+            case 1: *reg |= 0b00000010; break;
+            case 2: *reg |= 0b00000100; break;
+            case 3: *reg |= 0b00001000; break;
+            case 4: *reg |= 0b00010000; break;
+            case 5: *reg |= 0b00100000; break;
+            case 6: *reg |= 0b01000000; break;
+            case 7: *reg |= 0b10000000; break;
         }
-        return true;
     }
-    if ((memory.IO[0x0F] & 0b00000100) && (memory.IE & 0b00000100)) { // IME, IF, IE
-        if (!only_check_if_has_interruption) {
-            memory.IO[0x0F] &= 0b11111011;
-            cpu.IME = false;
-            call_to_address(0x0050);
+    else {
+        switch (bit) {
+            case 0: *reg &= 0b11111110; break;
+            case 1: *reg &= 0b11111101; break;
+            case 2: *reg &= 0b11111011; break;
+            case 3: *reg &= 0b11110111; break;
+            case 4: *reg &= 0b11101111; break;
+            case 5: *reg &= 0b11011111; break;
+            case 6: *reg &= 0b10111111; break;
+            case 7: *reg &= 0b01111111; break;
         }
-        return true;
     }
-    if ((memory.IO[0x0F] & 0b00001000) && (memory.IE & 0b00001000)) { // IME, IF, IE
-        if (!only_check_if_has_interruption) {
-            memory.IO[0x0F] &= 0b11110111;
-            cpu.IME = false;
-            call_to_address(0x0058);
-        }
-        return true;
+}
+
+uint8_t check_operand_row_collum_0_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+
+        case 0x00: rotate_register(&cpu.B, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.B, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.B,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.B); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.B, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.B, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.B, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.B, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.B, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.B, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.B, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.B, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.B, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.B, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.B, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.B, 6, true); cpu.PC+=2; return 8;
     }
-    if ((memory.IO[0x0F] & 0b00010000) && (memory.IE & 0b00010000)) { // IME, IF, IE
-        if (!only_check_if_has_interruption) {
-            memory.IO[0x0F] &= 0b11101111;
-            cpu.IME = false;
-            call_to_address(0x0060);
-        }
-        return true;
+}
+uint8_t check_operand_row_collum_1_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.C, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.C, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.C,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.C); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.C, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.C, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.C, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.C, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.C, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.C, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.C, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.C, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.C, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.C, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.C, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.C, 6, true); cpu.PC+=2; return 8;
     }
-    return false;
+}
+uint8_t check_operand_row_collum_2_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.D, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.D, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.D,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.D); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.D, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.D, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.D, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.D, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.D, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.D, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.D, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.D, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.D, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.D, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.D, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.D, 6, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_3_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.E, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.E, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.E,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.E); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.E, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.E, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.E, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.E, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.E, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.E, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.E, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.E, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.E, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.E, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.E, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.E, 6, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_4_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.H, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.H, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.H,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.H); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.H, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.H, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.H, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.H, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.H, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.H, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.H, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.H, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.H, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.H, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.H, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.H, 6, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_5_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.L, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.L, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.L,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.L); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.L, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.L, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.L, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.L, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.L, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.L, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.L, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.L, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.L, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.L, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.L, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.L, 6, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_6_CB_PREFIX(uint8_t opcode) {
+    uint8_t temp = read_from_memory_8bit(extract_adress(cpu.H, cpu.L));
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&temp, 'L', false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x10: rotate_register(&temp, 'L', true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x20: shift_register(&temp,'L',false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x30: swap_nibbles(&temp); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+
+        case 0x40: bit_opcode(&temp, 0); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x50: bit_opcode(&temp, 2); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x60: bit_opcode(&temp, 4); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x70: bit_opcode(&temp, 6); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+
+        case 0x80: flip_bit_opcode(&temp, 0, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x90: flip_bit_opcode(&temp, 2, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xA0: flip_bit_opcode(&temp, 4, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xB0: flip_bit_opcode(&temp, 6, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+
+        case 0xC0: flip_bit_opcode(&temp, 0, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xD0: flip_bit_opcode(&temp, 2, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xE0: flip_bit_opcode(&temp, 4, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xF0: flip_bit_opcode(&temp, 6, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+    }
+}
+uint8_t check_operand_row_collum_7_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.A, 'L', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.A, 'L', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.A,'L',false); cpu.PC+=2; return 8;
+        case 0x30: swap_nibbles(&cpu.A); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.A, 0); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.A, 2); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.A, 4); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.A, 6); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.A, 0, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.A, 2, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.A, 4, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.A, 6, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.A, 0, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.A, 2, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.A, 4, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.A, 6, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_8_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode))  {
+        case 0x00: rotate_register(&cpu.B, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.B, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.B,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.B,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.B, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.B, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.B, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.B, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.B, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.B, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.B, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.B, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.B, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.B, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.B, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.B, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_9_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode))  {
+        case 0x00: rotate_register(&cpu.C, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.C, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.C,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.C,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.C, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.C, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.C, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.C, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.C, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.C, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.C, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.C, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.C, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.C, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.C, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.C, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_A_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode))  {
+        case 0x00: rotate_register(&cpu.D, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.D, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.D,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.D,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.D, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.D, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.D, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.D, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.D, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.D, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.D, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.D, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.D, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.D, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.D, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.D, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_B_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.E, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.E, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.E,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.E,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.E, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.E, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.E, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.E, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.E, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.E, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.E, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.E, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.E, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.E, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.E, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.E, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_C_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.H, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.H, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.H,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.H,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.H, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.H, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.H, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.H, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.H, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.H, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.H, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.H, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.H, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.H, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.H, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.H, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_D_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode))  {
+        case 0x00: rotate_register(&cpu.L, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.L, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.L,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.L,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.L, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.L, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.L, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.L, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.L, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.L, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.L, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.L, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.L, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.L, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.L, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.L, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_row_collum_E_CB_PREFIX(uint8_t opcode) {
+    uint8_t temp = read_from_memory_8bit(extract_adress(cpu.H, cpu.L));
+    write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp);
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&temp, 'R', false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x10: rotate_register(&temp, 'R', true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x20: shift_register(&temp,'R',false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x30: shift_register(&temp,'R',true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+
+        case 0x40: bit_opcode(&temp, 1); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x50: bit_opcode(&temp, 3); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x60: bit_opcode(&temp, 5); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x70: bit_opcode(&temp, 7); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+
+        case 0x80: flip_bit_opcode(&temp, 1, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x90: flip_bit_opcode(&temp, 3, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xA0: flip_bit_opcode(&temp, 5, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xB0: flip_bit_opcode(&temp, 7, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+
+        case 0xC0: flip_bit_opcode(&temp, 1, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xD0: flip_bit_opcode(&temp, 3, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xE0: flip_bit_opcode(&temp, 5, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xF0: flip_bit_opcode(&temp, 7, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+    }
+}
+uint8_t check_operand_row_collum_F_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_row(opcode)) {
+        case 0x00: rotate_register(&cpu.A, 'R', false); cpu.PC+=2; return 8;
+        case 0x10: rotate_register(&cpu.A, 'R', true); cpu.PC+=2; return 8;
+        case 0x20: shift_register(&cpu.A,'R',false); cpu.PC+=2; return 8;
+        case 0x30: shift_register(&cpu.A,'R',true); cpu.PC+=2; return 8;
+
+        case 0x40: bit_opcode(&cpu.A, 1); cpu.PC+=2; return 8;
+        case 0x50: bit_opcode(&cpu.A, 3); cpu.PC+=2; return 8;
+        case 0x60: bit_opcode(&cpu.A, 5); cpu.PC+=2; return 8;
+        case 0x70: bit_opcode(&cpu.A, 7); cpu.PC+=2; return 8;
+
+        case 0x80: flip_bit_opcode(&cpu.A, 1, false); cpu.PC+=2; return 8;
+        case 0x90: flip_bit_opcode(&cpu.A, 3, false); cpu.PC+=2; return 8;
+        case 0xA0: flip_bit_opcode(&cpu.A, 5, false); cpu.PC+=2; return 8;
+        case 0xB0: flip_bit_opcode(&cpu.A, 7, false); cpu.PC+=2; return 8;
+
+        case 0xC0: flip_bit_opcode(&cpu.A, 1, true); cpu.PC+=2; return 8;
+        case 0xD0: flip_bit_opcode(&cpu.A, 3, true); cpu.PC+=2; return 8;
+        case 0xE0: flip_bit_opcode(&cpu.A, 5, true); cpu.PC+=2; return 8;
+        case 0xF0: flip_bit_opcode(&cpu.A, 7, true); cpu.PC+=2; return 8;
+    }
+}
+uint8_t check_operand_collumn_CB_PREFIX(uint8_t opcode) {
+    switch (get_opcode_collum(opcode)) {
+        case 0x00: return check_operand_row_collum_0_CB_PREFIX(opcode);
+        case 0x01: return check_operand_row_collum_1_CB_PREFIX(opcode);
+        case 0x02: return check_operand_row_collum_2_CB_PREFIX(opcode);
+        case 0x03: return check_operand_row_collum_3_CB_PREFIX(opcode);
+        case 0x04: return check_operand_row_collum_4_CB_PREFIX(opcode);
+        case 0x05: return check_operand_row_collum_5_CB_PREFIX(opcode);
+        case 0x06: return check_operand_row_collum_6_CB_PREFIX(opcode);
+        case 0x07: return check_operand_row_collum_7_CB_PREFIX(opcode);
+        case 0x08: return check_operand_row_collum_8_CB_PREFIX(opcode);
+        case 0x09: return check_operand_row_collum_9_CB_PREFIX(opcode);
+        case 0x0A: return check_operand_row_collum_A_CB_PREFIX(opcode);
+        case 0x0B: return check_operand_row_collum_B_CB_PREFIX(opcode);
+        case 0x0C: return check_operand_row_collum_C_CB_PREFIX(opcode);
+        case 0x0D: return check_operand_row_collum_D_CB_PREFIX(opcode);
+        case 0x0E: return check_operand_row_collum_E_CB_PREFIX(opcode);
+        case 0x0F: return check_operand_row_collum_F_CB_PREFIX(opcode);
+    }
 }
 //____________________________________________________
 uint8_t check_operand_row_collum_0(uint8_t opcode) {
@@ -922,12 +1644,12 @@ uint8_t check_operand_row_collum_0(uint8_t opcode) {
         case 0x10: cpu.is_halted = true; cpu.PC+=2; return 4;
         case 0x20:
             if (!is_Z_flag_up()) {
-                jump_relative(memory.game_rom[cpu.PC+1]);
+                jump_relative((int8_t)memory.game_rom[cpu.PC+1]);
                 return 12;
             } cpu.PC += 2; return 8;
         case 0x30:
             if (!is_C_flag_up()) {
-                jump_relative(memory.game_rom[cpu.PC+1]);
+                jump_relative((int8_t)memory.game_rom[cpu.PC+1]);
                 return 12;
             } cpu.PC += 2; return 8;
 
@@ -952,7 +1674,8 @@ uint8_t check_operand_row_collum_0(uint8_t opcode) {
                 return 20;
             } cpu.PC++; return 8;
         case 0xE0: write_into_memory_8bit(extract_adress(0xFF, memory.game_rom[cpu.PC +1]), cpu.A); cpu.PC+=2; return 12;
-        case 0xF0: set_8bit_register('A',read_from_memory_8bit(extract_adress(0xFF, memory.game_rom[cpu.PC +1]))); cpu.PC+=2; return 12;
+        case 0xF0:
+            set_8bit_register('A',read_from_memory_8bit(extract_adress(0xFF, memory.game_rom[cpu.PC +1]))); cpu.PC+=2; return 12;
         default:
     }
 }
@@ -1042,8 +1765,6 @@ uint8_t check_operand_row_collum_3(uint8_t opcode) {
         default:
     }
 }
-
-
 uint8_t check_operand_row_collum_4(uint8_t opcode) {
     uint8_t temp_var;
     switch (get_opcode_row(opcode)) {
@@ -1215,12 +1936,9 @@ uint8_t check_operand_row_collum_7(uint8_t opcode) {
         default:
     }
 }
-
-
 uint8_t check_operand_row_collum_8(uint8_t opcode) {
     uint16_t temp;
     switch (get_opcode_row(opcode)) {
-
         case 0x00:
             write_into_memory_8bit(extract_adress(memory.game_rom[cpu.PC+2],memory.game_rom[cpu.PC+1]), cpu.SP & 0x00FF);
             write_into_memory_8bit(extract_adress(memory.game_rom[cpu.PC+2],memory.game_rom[cpu.PC+1]) + 1, (uint8_t)((cpu.SP & 0xFF00) >> 8));
@@ -1252,17 +1970,15 @@ uint8_t check_operand_row_collum_8(uint8_t opcode) {
             if (is_C_flag_up()) {return_to_call_address(); return 20;}
             cpu.PC++; return 8;
         case 0xE0:
-            update_increment_SP_e8(memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 16;
+            update_increment_SP_e8((int8_t)memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 16;
         case 0xF0:
             temp = cpu.SP;
-            update_increment_SP_e8(memory.game_rom[cpu.PC+1]);
+            update_increment_SP_e8((int8_t)memory.game_rom[cpu.PC+1]);
             set_16bit_register('H', 'L', cpu.SP);
             cpu.SP = temp;cpu.PC+=2; return 12;
         default:
     }
 }
-
-
 uint8_t check_operand_row_collum_9(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: update_increment_16bit_register(&cpu.H,&cpu.L,extract_adress(cpu.B,cpu.C),false,false); cpu.PC++; return 8;
@@ -1287,8 +2003,6 @@ uint8_t check_operand_row_collum_9(uint8_t opcode) {
         default:
     }
 }
-
-
 uint8_t check_operand_row_collum_A(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.B, cpu.C))); cpu.PC++; return 8;
@@ -1327,7 +2041,6 @@ uint8_t check_operand_row_collum_A(uint8_t opcode) {
         default:
     }
 }
-
 uint8_t check_operand_row_collum_B(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: update_decrement_16bit_register(&cpu.B, &cpu.C, 1); cpu.PC++; return 8;
@@ -1345,14 +2058,13 @@ uint8_t check_operand_row_collum_B(uint8_t opcode) {
         case 0xA0: update_comparator_XOR_8bit_register(&cpu.A, cpu.E); cpu.PC++; return 4;
         case 0xB0: update_comparator_CP_8bit_register(cpu.A, cpu.E); cpu.PC++; return 4;
 
-        case 0xC0:  //TODO: implementar prefixo CB 0xXY
+        case 0xC0: return check_operand_collumn_CB_PREFIX(memory.game_rom[cpu.PC +1]);
         case 0xD0: return 0;
         case 0xE0: return 0;
-        case 0xF0: cpu.enable_interrupt = true;  //TODO: cond_enable EI
+        case 0xF0: cpu.enable_interrupt = true; cpu.PC++; return 4;  //TODO: cond_enable EI
         default:
     }
 }
-
 uint8_t check_operand_row_collum_C(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: update_increment_8bit_register(&cpu.C, 1, true, false); cpu.PC++; return 4;
@@ -1384,10 +2096,8 @@ uint8_t check_operand_row_collum_C(uint8_t opcode) {
             } cpu.PC+=3; return 12;
         case 0xE0: return 0;
         case 0xF0: return 0;
-        default:
     }
 }
-
 uint8_t check_operand_row_collum_D(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: update_decrement_8bit_register(&cpu.C, 1, true, false); cpu.PC++; return 4;
@@ -1406,16 +2116,12 @@ uint8_t check_operand_row_collum_D(uint8_t opcode) {
         case 0xB0: update_comparator_CP_8bit_register(cpu.A, cpu.L); cpu.PC++; return 4;
 
         case 0xC0: cpu.PC+=3; call_to_address(extract_adress(memory.game_rom[cpu.PC-1],memory.game_rom[cpu.PC-2])); return 24;
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
+        case 0xD0: exit(1);
+        case 0xE0: exit(1);
+        case 0xF0: exit(1);
     }
 }
-
-
 uint8_t check_operand_row_collum_E(uint8_t opcode) {
-    bool temp_cond;
     switch (get_opcode_row(opcode)) {
         case 0x00: set_8bit_register('C', memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 8;
         case 0x10: set_8bit_register('E', memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 8; // load HL, n16
@@ -1436,14 +2142,10 @@ uint8_t check_operand_row_collum_E(uint8_t opcode) {
         case 0xD0: update_decrement_8bit_register(&cpu.A, memory.game_rom[cpu.PC+1], false, true); cpu.PC+=2; return 8;
         case 0xE0: update_comparator_XOR_8bit_register(&cpu.A, memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 8;
         case 0xF0: update_comparator_CP_8bit_register(cpu.A, memory.game_rom[cpu.PC+1]); cpu.PC+=2; return 8;
-        default:
     }
 }
-
 uint8_t check_operand_row_collum_F(uint8_t opcode) {
-    bool temp_cond;
     uint8_t temporary_var_rotation;
-    uint8_t adjustment;
     switch (get_opcode_row(opcode)) {
         case 0x00:
             temporary_var_rotation = cpu.A >> 1;
@@ -1491,10 +2193,8 @@ uint8_t check_operand_row_collum_F(uint8_t opcode) {
         case 0xD0: cpu.PC++; call_to_address(0x18); return 16;
         case 0xE0: cpu.PC++; call_to_address(0x28); return 16;
         case 0xF0: cpu.PC++; call_to_address(0x38); return 16;
-        default:
     }
 }
-
 uint8_t check_operand_collumn(uint8_t opcode) {
     switch (get_opcode_collum(opcode)) {
         case 0x00: return check_operand_row_collum_0(opcode);
@@ -1513,513 +2213,17 @@ uint8_t check_operand_collumn(uint8_t opcode) {
         case 0x0D: return check_operand_row_collum_D(opcode);
         case 0x0E: return check_operand_row_collum_E(opcode);
         case 0x0F: return check_operand_row_collum_F(opcode);
-        default:
-    }
-}
-// reg = ponteiro do registrador
-// char left_or_right => L = left shift | R = right shift
-// bool cond_carry    => true = include carry "RL" | false = does not include carry "RLC"
-void rotate_register(uint8_t* reg, char left_or_right, bool cond_carry_cond) {
-    uint8_t old_reg_value = *reg;
-    set_H_flag_up(false);
-    set_N_flag_up(false);
-    if (left_or_right == 'L') {
-        *reg = *reg<<1;
-        if (cond_carry_cond) {
-            if (is_C_flag_up()) {
-                set_C_flag_up(false);
-                *reg |= 0b1;
-            }
-            (old_reg_value & 0b10000000)? set_C_flag_up(true) : set_C_flag_up(false);
-        }
-        else {
-            if (old_reg_value & 0b10000000) {
-                set_C_flag_up(true);
-                *reg |= 0b1;
-            }
-            else {
-                set_C_flag_up(false);
-            }
-        }
-    }
-    else if (left_or_right == 'R') {
-        *reg = *reg>>1;
-        if (cond_carry_cond) {
-            if (is_C_flag_up()) {
-                set_C_flag_up(false);
-                *reg |= 0b10000000;
-            }
-            (old_reg_value & 0b1)? set_C_flag_up(true) : set_C_flag_up(false);
-        }
-        else {
-            if (old_reg_value & 0b1) {
-                set_C_flag_up(true);
-                *reg |= 0b10000000;
-            }
-            else {
-                set_C_flag_up(false);
-            }
-        }
-    }
-    (*reg == 0)? set_Z_flag_up(true) : set_Z_flag_up(false);
-}
-
-uint8_t check_operand_row_collum_0_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_1_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_2_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_3_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_4_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_5_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_6_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_7_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_8_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_9_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_A_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_B_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_C_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_D_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_E_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_row_collum_F_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_row(opcode)) {
-        case 0x00:
-        case 0x10:
-        case 0x20:
-        case 0x30:
-
-        case 0x40:
-        case 0x50:
-        case 0x60:
-        case 0x70:
-
-        case 0x80:
-        case 0x90:
-        case 0xA0:
-        case 0xB0:
-
-        case 0xC0:
-        case 0xD0:
-        case 0xE0:
-        case 0xF0:
-        default:
-    }
-}
-
-uint8_t check_operand_collumn_CB_PREFIX(uint8_t opcode) {
-    switch (get_opcode_collum(opcode)) {
-        case 0x00: return check_operand_row_collum_0_CB_PREFIX(opcode);
-        case 0x01: return check_operand_row_collum_1_CB_PREFIX(opcode);
-        case 0x02: return check_operand_row_collum_2_CB_PREFIX(opcode);
-        case 0x03: return check_operand_row_collum_3_CB_PREFIX(opcode);
-        case 0x04: return check_operand_row_collum_4_CB_PREFIX(opcode);
-        case 0x05: return check_operand_row_collum_5_CB_PREFIX(opcode);
-        case 0x06: return check_operand_row_collum_6_CB_PREFIX(opcode);
-        case 0x07: return check_operand_row_collum_7_CB_PREFIX(opcode);
-        case 0x08: return check_operand_row_collum_8_CB_PREFIX(opcode);
-        case 0x09: return check_operand_row_collum_9_CB_PREFIX(opcode);
-        case 0x0A: return check_operand_row_collum_A_CB_PREFIX(opcode);
-        case 0x0B: return check_operand_row_collum_B_CB_PREFIX(opcode);
-        case 0x0C: return check_operand_row_collum_C_CB_PREFIX(opcode);
-        case 0x0D: return check_operand_row_collum_D_CB_PREFIX(opcode);
-        case 0x0E: return check_operand_row_collum_E_CB_PREFIX(opcode);
-        case 0x0F: return check_operand_row_collum_F_CB_PREFIX(opcode);
-        default:
     }
 }
 
 
-/*
-typedef struct Reg {
-    bool is_halted;
-    bool only_waiting_for_interrupt_cond;
-    bool halt_bug;
-    bool tima_is_on;
-    bool enable_interrupt;
-    bool IME;
-
-    uint8_t lower_byte;
-    uint8_t upper_byte;
-
-    uint8_t curr_operation;
-
-    uint16_t SP;
-    uint16_t PC;
-
-    uint8_t A;
-    uint8_t B;
-    uint8_t C;
-    uint8_t D;
-    uint8_t E;
-    uint8_t H;
-    uint8_t L;
-
-    uint8_t F; // registrador de flags, apenas usa os 4 primeiros bits ex 1011 0000
-
-    int contador_ciclos;
-    int contador_ciclos_div;
-    int contador_ciclos_tima;
-} GB_reg;
-
- */
+void incrementar_ciclos(uint8_t ciclos) {
+    if (check_LCDC(7))ppu.contador_ciclos += ciclos;
+    cpu.contador_ciclos_div += ciclos;
+    if (read_from_memory_8bit(REG_LCDC) & 0b10000000) {
+        cpu.contador_ciclos_tima += ciclos;
+    }
+}
 
 void clear_registers() {
     cpu.A = 0;
@@ -2041,12 +2245,291 @@ void clear_registers() {
     cpu.contador_ciclos_div = 0;
     cpu.contador_ciclos_tima = 0;
 }
+void SDL_SetColor0(SDL_Renderer *renderer) {
+    SDL_SetRenderDrawColor(renderer, 155, 188, 15, 255); // #9BBC0F
+}
+
+void SDL_SetColor1(SDL_Renderer *renderer) {
+    SDL_SetRenderDrawColor(renderer, 139, 172, 15, 255); // #8BAC0F
+}
+
+void SDL_SetColor2(SDL_Renderer *renderer) {
+    SDL_SetRenderDrawColor(renderer, 48, 98, 48, 255); // #306230
+}
+
+void SDL_SetColor3(SDL_Renderer *renderer) {
+    SDL_SetRenderDrawColor(renderer, 15, 56, 15, 255); // #0F380F
+}
+
+void draw_line() {
+
+}
+
+// TODO: substituir o carregamento completo de background/window por renderização por scanline.
+//
+// Mini-task:
+// 1. Criar uma função render_scanline(uint8_t ly).
+// 2. Percorrer somente os 160 pixels da linha atual.
+// 3. Para cada X, calcular as coordenadas do Background usando SCX e SCY.
+// 4. Descobrir tile_x, tile_y, pixel_x e pixel_y.
+// 5. Ler o ID do tile no tilemap selecionado pelo LCDC.
+// 6. Buscar o par de bytes correspondente à linha do tile.
+// 7. Formar o índice de cor de 2 bits do pixel.
+// 8. Verificar se a Window cobre esse pixel usando WX - 7 e WY.
+// 9. Quando cobrir, substituir o pixel do BG pelo pixel local da Window.
+// 10. Salvar o resultado em ppu.LCDscreen[ly][x].
+// 11. Chamar a função uma vez quando a scanline visível terminar.
+// 12. Manter SDL_RenderPresent() apenas uma vez por frame.
+//
+// Primeiro objetivo: fazer funcionar sem sprites, usando somente BG + Window.
+
+void load_tile_data() {
+    bool cond_signed_or_not = (check_LCDC(4)) ?  true : false;
+    uint16_t adrr = (cond_signed_or_not)?  0x8000 : 0x8800;
+    for (int i = 0; i<32; i++) {
+        for (int j = 0; j<32; j++) {
+            for (int k = 0; k<16; k+=2) {
+                ppu.tile_data[i][j][k] = read_from_memory_8bit(adrr);
+                ppu.tile_data[i][j][k+1] = read_from_memory_8bit(adrr+1);
+                adrr+=2;
+            }
+        }
+    }
+}
+
+void load_background_and_window_() {
+    bool cond_signed_or_not = (check_LCDC(4)) ? true : false;
+    uint16_t adrr = (check_LCDC(3))? 0x9C00 : 0x9800;
+    uint8_t current_x_tile=0;
+    uint8_t current_y_tile=0;
+
+    for (int i = 0; i<32; i++) {
+        for (int j = 0; j<32; j++) {
+            uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr) : ((int8_t) read_from_memory_8bit(adrr));;
+            int current_x_map = current_coord % 32;
+            int current_y_map = current_coord/32;
+            for (int k = 0; k<16; k+=2) {
+                for (int l = 0;l < 8; l++) {
+                    uint8_t cor = (uint8_t)( ( ( ( (ppu.tile_data[current_y_map][current_x_map][k+1]) << l) & 0b10000000) >> 6) |
+                                             ( ( ( (ppu.tile_data[current_y_map][current_x_map][k]  ) << l) & 0b10000000) >> 7));
+                    ppu.background[(k/2) + current_y_tile][l + current_x_tile] = cor;
+                }
+
+            }
+            adrr++;
+            current_x_tile+=8;
+        }
+        current_x_tile = 0;
+        current_y_tile+=8;
+    }
+    adrr = (check_LCDC(6))? 0x9C00 : 0x9800;
+    current_x_tile=0;
+    current_y_tile=0;
+    for (int i = 0; i<32; i++) {
+        for (int j = 0; j<32; j++) {
+            uint8_t current_coord = (cond_signed_or_not)? 256 + read_from_memory_8bit(adrr) : ((int8_t) read_from_memory_8bit(adrr));;
+            int current_x_map = current_coord % 32;
+            int current_y_map = current_coord/32;
+            for (int k = 0; k<16; k+=2) {
+                for (int l = 0;l < 8; l++) {
+                    uint8_t cor = (uint8_t)( ( ( ( (ppu.tile_data[current_y_map][current_x_map][k+1]) << l) & 0b10000000) >> 6) |
+                                             ( ( ( (ppu.tile_data[current_y_map][current_x_map][k]  ) << l) & 0b10000000) >> 7));
+                    ppu.window[(k/2) + current_y_tile][l + current_x_tile] = cor;
+                }
+
+            }
+            adrr++;
+            current_x_tile+=8;
+        }
+        current_x_tile = 0;
+        current_y_tile+=8;
+    }
+}
+void translate_to_LCD() {
+    //render_map();
+    bool cond_signed_or_not = (check_LCDC(4)) ?  true : false;
+    uint16_t adrr = (cond_signed_or_not)?  0x8000 + (ppu.current_y_from_tiles) : 0x8800 + (ppu.current_y_from_tiles);
+    bool cond_window_enable = (check_LCDC(5))? true:false;
+    //printf("y: %u | x: %u | cond: %d\n",ppu.window_top_left.y, ppu.window_top_left.x, cond_window_enable);
+    uint8_t tilemap[65];
+    uint8_t background[32][8];
+    uint8_t window_map[32][8];
+    int i = ppu.current_LY;
+    for (int j = 0; j<65; j+=2) {
+            tilemap[j] = read_from_memory_8bit(adrr);
+            tilemap[j+1] = read_from_memory_8bit(adrr+1);
+            adrr+=8;
+    }
+    adrr = (check_LCDC(3))? 0x9C00 : 0x9800;
+    for (int j = 0; j<32; j++) {
+        uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr)  + (ppu.current_y_from_tiles): ((int8_t) read_from_memory_8bit(adrr)) + (ppu.current_y_from_tiles);
+        for (int l = 0;l < 8; l++) {
+            uint8_t cor = (uint8_t)( ( ( ( (tilemap[j]) << l) & 0b10000000) >> 6) |
+                                     ( ( ( (tilemap[j+1]  ) << l) & 0b10000000) >> 7));
+            background[j][l] = cor;
+        }
+        adrr+=8;
+    }
+    adrr = (check_LCDC(6))? 0x9C00 : 0x9800;
+    for (int j = 0; j<32; j++) {
+        uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr)  + (ppu.current_y_from_tiles): ((int8_t) read_from_memory_8bit(adrr)) + (ppu.current_y_from_tiles);
+        for (int l = 0;l < 8; l++) {
+            uint8_t cor = (uint8_t)( ( ( ( (tilemap[j]) << l) & 0b10000000) >> 6) |
+                                     ( ( ( (tilemap[j+1]  ) << l) & 0b10000000) >> 7));
+            window_map[j][l] = cor;
+        }
+        adrr+=8;
+    }
+    int window_screen_x = (int)ppu.window_top_left.x - 7;
+    int window_screen_y = ppu.window_top_left.y;
+
+    uint8_t scx = read_from_memory_8bit(REG_SCX);
+    uint8_t scy = read_from_memory_8bit(REG_SCY);
+    bool window_enable = check_LCDC(5);
+    uint8_t ly = ppu.current_LY;
+    for (int screen_x = 0; screen_x < 160; screen_x++) {
+
+        bool pixel_inside_window =
+            window_enable &&
+            ly >= window_screen_y &&
+            screen_x >= window_screen_x;
+
+        if (pixel_inside_window) {
+            int window_x = screen_x - window_screen_x;
+            int window_y = ly - window_screen_y;
+
+            ppu.LCDscreen[ly][screen_x] =
+                window_map[window_y][window_x];
+        }
+        else {
+            uint8_t background_x = (uint8_t)(screen_x + scx);
+            uint8_t background_y = (uint8_t)(ly + scy);
+
+            ppu.LCDscreen[ly][screen_x] =
+                background[background_y][background_x];
+        }
+    }
+}
+
+void render_to_lcd() {
+    SDL_SetRenderDrawColor(renderer, 155, 188, 15, 255);
+    SDL_RenderClear(renderer);
+    for (int i =0; i<144;i++) {
+        for (int j = 0; j<160;j++) {
+            switch (ppu.LCDscreen[i][j]) {
+                case 0b00: SDL_SetColor0(renderer); break;
+                case 0b01: SDL_SetColor1(renderer); break;
+                case 0b10: SDL_SetColor2(renderer); break;
+                case 0b11: SDL_SetColor3(renderer); break;
+            }
+            SDL_RenderDrawPoint(renderer, j , i);
+        }
+    }
+    SDL_RenderPresent(renderer);
+    getchar();
+}
+
+void ppu_cycles_Verify() {
+    ppu.window_top_left.y  = read_from_memory_8bit(0xFF4A);
+    ppu.window_top_left.x  = read_from_memory_8bit(0xFF4B);
+    bool cond_render = false;
+    printf("current LY: %u | current cycles: %u | current CPU cycles: %u\n", ppu.current_LY, ppu.contador_ciclos, cpu.contador_ciclos);
+    (compare_lyc_ly())? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b00000100)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b11111011));
+    if (ppu.contador_ciclos < (uint16_t) 80 && ppu.current_LY < 144) {
+        if (cond_estado_2_da_ppu_foi_mudado) {
+            set_ppu_mode(2);
+            cond_estado_2_da_ppu_foi_mudado = false;
+        }
+        if (get_STAT_mode((3))) {
+            cond_start_STAT = true;
+        }
+    }
+    if (ppu.contador_ciclos >= 80 && ppu.contador_ciclos < 252 && ppu.current_LY < 144) {
+        if (cond_estado_3_da_ppu_foi_mudado) {
+            set_ppu_mode(3);
+            cond_estado_3_da_ppu_foi_mudado = false;
+        }
+    }
+
+    if (ppu.contador_ciclos >= 252 && ppu.contador_ciclos < 456 && ppu.current_LY < 144) {
+        if (cond_estado_0_da_ppu_foi_mudado) {
+            set_ppu_mode(0);
+            cond_estado_0_da_ppu_foi_mudado = false;
+        }
+        if (get_STAT_mode((3))) {
+            cond_start_STAT = true;
+        }
+    }
+    else {
+        if (ppu.current_LY == 144 ) {
+            if (cond_estado_1_da_ppu_foi_mudado) {
+                set_ppu_mode(1);
+                cond_estado_1_da_ppu_foi_mudado = false;
+            }
+            if (get_STAT_mode((4))) {
+                cond_start_STAT = true;
+            }
+        }
+    }
+    while (ppu.contador_ciclos >= (uint16_t) 456) {
+        ppu.contador_ciclos -= (uint16_t) 456;
+        ppu.current_LY++;
+        ppu.current_y_from_tiles++;
+        update_LY();
+        if (get_STAT_mode((6)) && compare_lyc_ly()) {
+            cond_start_STAT = true;
+        }
+        if (ppu.current_LY<144) translate_to_LCD();
+        if (ppu.current_LY >= (uint16_t) 144 && ppu.current_LY < (uint16_t) 153) {
+            //load_tile_data();
+            //load_background_and_window_();
+            cond_start_vblank = true;
+            ppu.frame_ready = true;
+        }
+        if (ppu.current_LY >= (uint16_t) 153) {
+            ppu.current_y_from_tiles=0;
+            //render_to_lcd();
+            cond_estado_0_da_ppu_foi_mudado = true;
+            cond_estado_1_da_ppu_foi_mudado = true;
+            cond_estado_2_da_ppu_foi_mudado = true;
+            cond_estado_3_da_ppu_foi_mudado = true;
+            ppu.current_LY = -1;
+            update_LY();
+            cond_start_vblank = false;
+            cond_start_STAT = false;
+            cond_ja_foi_STAT = false;
+            cond_ja_foi_vblank = false;
+            ppu.frame_ready = false;
+            set_interrupt(0,false);
+            cond_render = true;
+        }
+    }
+    if (cond_render) {
+        render_to_lcd();
+        //printf("ola\n");
+        cond_render = false;
+    }
+}
+
+
 int main(void) {
+
+    if (SDL_Init(SDL_INIT_EVERYTHING)!=0) {
+        perror("SDL nao inicializou");
+        SDL_Quit();
+    }
+    SDL_CreateWindowAndRenderer(160, 144, SDL_WINDOW_SHOWN, &screen, &renderer);
+    if (screen == NULL) {
+        //printf("aff");
+        SDL_DestroyWindow(screen);
+    }
+    screenSurface = SDL_GetWindowSurface(screen);
+    //SDL_FillRect(screenSurface, NULL, 0x000000);
     uint16_t temporary_PC_addr = 0x0000;
     clear_registers();
-    if (!cond_debug) start_game("/home/bolota/CLionProjects/untitled/Tetris.gb");
+    char* path_rom = "/home/bolota/CLionProjects/gameboy-from-scratch/dmg-acid2.gb";
+    if (!cond_debug) start_game(path_rom);
     //printf("Gameboy ROM size: %d\n", memory.game_rom_lenght);
-    int count = 1;
     int curr_operation = 0;
     if (cond_debug) {
         while (curr_operation<nmbr_tests){
@@ -2056,19 +2539,22 @@ int main(void) {
             printf("|                                                                                                                                                                          |\n");
             while (memory.game_rom[cpu.PC]!=0x10) {
                 //if (curr_operation==0) printf("\n\n0x%04x\n\n",read_from_memory_8bit(0xC000));
-                sleep(1);
+                usleep(2000);
                 printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
 
                 printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
                                  "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |                |\n", memory.game_rom[cpu.PC], cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
                 if (cpu.is_halted) {
                     incrementar_ciclos(4);
-                    check_cycle_counter();usleep(20000);cpu.is_halted = !check_if_is_interrupted(false);
+                    cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
+                    check_cycle_counter();
+                    cpu.is_halted = !check_if_is_interrupted(false);
                 }
                 else if (cpu.only_waiting_for_interrupt_cond){
                     incrementar_ciclos(4);
                     check_cycle_counter();
                     cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
+                    sleep(2);
                 }
                 else {
                     if (cpu.halt_bug) temporary_PC_addr = cpu.PC;
@@ -2082,10 +2568,11 @@ int main(void) {
                     if (cpu.enable_interrupt) {cpu.IME = true; cpu.enable_interrupt = false;}
                 }
             }
+
             printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
             printf("|[> Results <]____________________________________________________________________________________________________________________________________________________________|\n");
             printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
-                             "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |               |\n", memory.game_rom[cpu.PC], cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
+                         "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |               |\n", memory.game_rom[cpu.PC], cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
             printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
             printf("| Cycles_DIV => %3d | Cycles_TIMA => %3d                                                                                                                                  |\n", cpu.contador_ciclos_div, cpu.contador_ciclos_tima);
             printf("!_________________________________________________________________________________________________________________________________________________________________________!\n\n");
@@ -2093,30 +2580,85 @@ int main(void) {
         }
     }
     else {
+        printf("[> Current ROM: %40s <]___________________________________________________________________________________________________________.\n",path_rom);
+        printf("|                                                                                                                                                                          |\n");
+        printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
+        bool cond_go = true;
+        //int cond = 0;
+        //long int count = 0;
+        //int count_ppu = 0;
+        //memory.IO[0] = 0b00001111;
+        static uint8_t old_state = 0xFF;
+        static uint8_t old_timer = 0xFF;
+
         while (1) {
-            usleep(200000);
-            printf("curr instruction: %02x\n", memory.game_rom[cpu.PC]);
+
+            //uint8_t state = read_from_memory_8bit(0xFFE1);
+            //uint8_t timer = read_from_memory_8bit(0xFFA6);
+            //if (state != old_state || timer != old_timer) {
+                //printf("STATE=%02X TIMER=%02X PC=%04X LY=%02X FF85=%02X\n",state,timer,cpu.PC,read_from_memory_8bit(0xFF44),read_from_memory_8bit(0xFF85));old_state = state;old_timer = timer;
+            //}
+            //render_map(false);
+
+            //printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
+            //             "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |                |\n", memory.game_rom[cpu.PC], cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
+            //printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
+            //usleep(20000);
+            //uint8_t current_state = read_from_memory_8bit(0xFFE1);
+            //cond++;
+            //printf("curr instruction: %02x\n", memory.game_rom[cpu.PC]);
             if (cpu.is_halted) {
-                incrementar_ciclos(4);
-                check_cycle_counter();
+                if (cond_start_vblank && !cond_ja_foi_vblank) {
+                    set_interrupt(0,true);
+                    cond_ja_foi_vblank = true;
+                }
+                if (cond_start_STAT && !cond_ja_foi_STAT) {
+                    set_interrupt(1,true);
+                    cond_ja_foi_STAT = true;
+                }
+                incrementar_ciclos(0x4);
+                check_cycle_counter();ppu_cycles_Verify();
                 cpu.is_halted = !check_if_is_interrupted(false);
             }
-            else if (cpu.only_waiting_for_interrupt_cond){
-                incrementar_ciclos(4);
+            if (cpu.only_waiting_for_interrupt_cond){
+                if (cond_start_vblank && !cond_ja_foi_vblank) {
+                    set_interrupt(0,true);
+                    cond_ja_foi_vblank = true;
+                }
+                if (cond_start_STAT && !cond_ja_foi_STAT) {
+                    set_interrupt(1,true);
+                    cond_ja_foi_STAT = true;
+                }
+                incrementar_ciclos(0x4);
                 check_cycle_counter();
+                ppu_cycles_Verify();
                 cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
             }
             else {
+                if (cond_start_vblank && !cond_ja_foi_vblank) {
+                    set_interrupt(0,true);
+                    cond_ja_foi_vblank = true;
+
+                }
+                if (cond_start_STAT && !cond_ja_foi_STAT) {
+                    set_interrupt(1,true);
+                    cond_ja_foi_STAT = true;
+                }
                 if (cpu.halt_bug) temporary_PC_addr = cpu.PC;
-                incrementar_ciclos(check_operand_collumn(memory.game_rom[cpu.PC]));
+                uint8_t nbr =check_operand_collumn(read_from_memory_8bit(cpu.PC) );
+                //printf("%d | ",nbr);
+                incrementar_ciclos(nbr);
                 if (cpu.halt_bug) {
                     cpu.PC = temporary_PC_addr;
                     cpu.halt_bug = false;
                 }
                 check_cycle_counter();
+                ppu_cycles_Verify();
                 if (cpu.IME) cpu.is_halted = check_if_is_interrupted(true);
                 if (cpu.enable_interrupt) {cpu.IME = true; cpu.enable_interrupt = false;}
             }
         }
+        SDL_DestroyWindow(screen);
+        SDL_Quit();
     }
 }
