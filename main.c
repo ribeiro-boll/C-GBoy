@@ -74,6 +74,8 @@ typedef struct Pixel_coords {
 } Pixel_coords;
 
 typedef struct GB_PPU {
+    // TODO(PPU): revisar estes caches na reescrita; com renderização direta por scanline,
+    // TODO(PPU): tile_data/background/window e current_y_from_tiles podem deixar de existir.
     uint8_t current_y_from_tiles;
     uint8_t current_LY;
     uint8_t tile_data[32][32][16];
@@ -549,6 +551,8 @@ TestProgram tests_extra[] = {
 // ------------------ end debug   -----------
 
 void load_memory(TestProgram program) {
+    // TODO(DEBUG): revisar cond_first_run; do jeito atual ele nunca passa para false na primeira carga.
+    // TODO(DEBUG): verificar malloc antes de usar e liberar a ROM anterior corretamente.
     if (!cond_first_run) {
         free(memory.game_rom);
         cond_first_run = false;
@@ -577,6 +581,8 @@ uint8_t read_MBC3(uint16_t endereco) {
 }
 
 uint8_t read_from_memory_8bit(uint16_t address) {
+    // TODO(MEM): validar limites da ROM antes de indexar memory.game_rom.
+    // TODO(MEM): centralizar toda leitura da CPU neste barramento, inclusive operandos imediatos.
     // if (address == 0xFF44 && cpu.PC == 0x2828) return 0x91;
     // if (address == 0xFF44) return 0x94;
     if (address >= 0x0000 && 0x3FFF >= address) return memory.game_rom[address];
@@ -600,6 +606,8 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     return 0;
 }
 void write_into_memory_8bit(uint16_t address, uint8_t variable) {
+    // TODO(MEM): implementar escrita no Echo RAM (0xE000-0xFDFF).
+    // TODO(IO): tratar registradores especiais individualmente (DIV, LY, DMA, IF, etc.).
     //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
     //if (address >= 0x4000  && 0x7FFF >= address) {
          //switch (memory.MBC_type) {
@@ -740,6 +748,7 @@ BITS   0b0 0 0 0 0 0 0 0
 
 */
 bool get_STAT_mode(int bit) {
+    // TODO(PPU): adicionar retorno padrão para bits inválidos e evitar comportamento indefinido.
     switch (bit) {
         case 3: return (read_from_memory_8bit(REG_STAT) & 0b00001000)? true : false;
         case 4: return (read_from_memory_8bit(REG_STAT) & 0b00010000)? true : false;
@@ -759,6 +768,8 @@ void set_ppu_mode(uint8_t mode) {
 }
 
 bool compare_lyc_ly() {
+    // TODO(PPU): esta função deve comparar LY com LYC independentemente do bit 6 de STAT.
+    // TODO(PPU): a comparação e a habilitação da interrupção são responsabilidades separadas.
     if (ppu.current_LY == read_from_memory_8bit(0xFF45) && get_STAT_mode(6)) {
         return true;
     }
@@ -771,6 +782,8 @@ The Game Boy constantly compares the value of the LYC and LY registers. When bot
 
 
 void check_cycle_counter() {
+    // TODO(TIMER): selecionar a frequência usando apenas TAC bits 1-0, sem comparar o byte inteiro.
+    // TODO(TIMER): revisar o atraso/comportamento real do overflow de TIMA em uma etapa posterior.
     while (cpu.contador_ciclos_div >= 256) {
         cpu.contador_ciclos_div -= 256;
         memory.IO[0x04] +=1; // div
@@ -860,6 +873,8 @@ void set_C_flag_up(bool up_or_down) {
 //______________________________________
 
 void start_game(char* game_adress) {
+    // TODO(ROM): validar fopen antes de usar getc/rewind/fread.
+    // TODO(ROM): revisar o +1 no tamanho e conferir o retorno de fread/malloc.
     int game_rom_lenght = 0;
     FILE *fl = fopen(game_adress, "rb");
     int curr_variable = getc(fl);
@@ -943,6 +958,7 @@ void update_increment_SP_e8(int8_t e8) {
     (((old_sp & 0xFF) + (e8 & 0xFF)) > 0xFF) ? set_C_flag_up(true) : set_C_flag_up(false);
 }
 uint8_t update_increment_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte, uint16_t increment, bool cond_inc, bool carry_cond) {
+    // TODO(CPU): revisar carry_cond; o carry entra em temp_sum/flags, mas não entra no valor de result.
     uint16_t target_hex = extract_adress(*upper_byte, *lower_byte);
     uint8_t carry = 0;
     if (carry_cond) {
@@ -1174,6 +1190,7 @@ void rotate_register(uint8_t* reg, char left_or_right, bool cond_carry_cond) {
 }
 
 void shift_register(uint8_t* reg, char left_or_right, bool is_logical) {
+    // TODO(CPU): no shift aritmético à direita, preservar o bit 7 original em vez de sempre ligá-lo.
     set_H_flag_up(false);
     set_N_flag_up(false);
     if (left_or_right == 'L'){
@@ -1638,6 +1655,8 @@ uint8_t check_operand_collumn_CB_PREFIX(uint8_t opcode) {
     }
 }
 //____________________________________________________
+// TODO(CPU/BUS): vários handlers abaixo leem operandos por memory.game_rom[cpu.PC + n].
+// TODO(CPU/BUS): trocar futuramente pelo barramento para respeitar MBC e execução fora da ROM fixa.
 uint8_t check_operand_row_collum_0(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
         case 0x00: cpu.PC++; return 4;
@@ -2218,6 +2237,9 @@ uint8_t check_operand_collumn(uint8_t opcode) {
 
 
 void incrementar_ciclos(uint8_t ciclos) {
+    // TODO(CPU): incrementar cpu.contador_ciclos caso ele represente o total de ciclos executados.
+    // TODO(TIMER): TIMA deve depender de TAC, não do bit de habilitação do LCDC.
+    // TODO(PPU): definir explicitamente o estado de LY/modo quando o LCD estiver desligado.
     if (check_LCDC(7))ppu.contador_ciclos += ciclos;
     cpu.contador_ciclos_div += ciclos;
     if (read_from_memory_8bit(REG_LCDC) & 0b10000000) {
@@ -2284,131 +2306,18 @@ void draw_line() {
 // Primeiro objetivo: fazer funcionar sem sprites, usando somente BG + Window.
 
 void load_tile_data() {
-    bool cond_signed_or_not = (check_LCDC(4)) ?  true : false;
-    uint16_t adrr = (cond_signed_or_not)?  0x8000 : 0x8800;
-    for (int i = 0; i<32; i++) {
-        for (int j = 0; j<32; j++) {
-            for (int k = 0; k<16; k+=2) {
-                ppu.tile_data[i][j][k] = read_from_memory_8bit(adrr);
-                ppu.tile_data[i][j][k+1] = read_from_memory_8bit(adrr+1);
-                adrr+=2;
-            }
-        }
-    }
+    // TODO(PPU): reimplementar somente se você decidir manter um cache de tiles.
+    // TODO(PPU): na abordagem por scanline direta, esta função provavelmente deixa de ser necessária.
 }
 
 void load_background_and_window_() {
-    bool cond_signed_or_not = (check_LCDC(4)) ? true : false;
-    uint16_t adrr = (check_LCDC(3))? 0x9C00 : 0x9800;
-    uint8_t current_x_tile=0;
-    uint8_t current_y_tile=0;
-
-    for (int i = 0; i<32; i++) {
-        for (int j = 0; j<32; j++) {
-            uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr) : ((int8_t) read_from_memory_8bit(adrr));;
-            int current_x_map = current_coord % 32;
-            int current_y_map = current_coord/32;
-            for (int k = 0; k<16; k+=2) {
-                for (int l = 0;l < 8; l++) {
-                    uint8_t cor = (uint8_t)( ( ( ( (ppu.tile_data[current_y_map][current_x_map][k+1]) << l) & 0b10000000) >> 6) |
-                                             ( ( ( (ppu.tile_data[current_y_map][current_x_map][k]  ) << l) & 0b10000000) >> 7));
-                    ppu.background[(k/2) + current_y_tile][l + current_x_tile] = cor;
-                }
-
-            }
-            adrr++;
-            current_x_tile+=8;
-        }
-        current_x_tile = 0;
-        current_y_tile+=8;
-    }
-    adrr = (check_LCDC(6))? 0x9C00 : 0x9800;
-    current_x_tile=0;
-    current_y_tile=0;
-    for (int i = 0; i<32; i++) {
-        for (int j = 0; j<32; j++) {
-            uint8_t current_coord = (cond_signed_or_not)? 256 + read_from_memory_8bit(adrr) : ((int8_t) read_from_memory_8bit(adrr));;
-            int current_x_map = current_coord % 32;
-            int current_y_map = current_coord/32;
-            for (int k = 0; k<16; k+=2) {
-                for (int l = 0;l < 8; l++) {
-                    uint8_t cor = (uint8_t)( ( ( ( (ppu.tile_data[current_y_map][current_x_map][k+1]) << l) & 0b10000000) >> 6) |
-                                             ( ( ( (ppu.tile_data[current_y_map][current_x_map][k]  ) << l) & 0b10000000) >> 7));
-                    ppu.window[(k/2) + current_y_tile][l + current_x_tile] = cor;
-                }
-
-            }
-            adrr++;
-            current_x_tile+=8;
-        }
-        current_x_tile = 0;
-        current_y_tile+=8;
-    }
+    // TODO(PPU): reimplementar a composição do BG/Window por scanline.
+    // TODO(PPU): evitar reconstruir buffers completos de 256x256 a cada atualização.
 }
 void translate_to_LCD() {
-    //render_map();
-    bool cond_signed_or_not = (check_LCDC(4)) ?  true : false;
-    uint16_t adrr = (cond_signed_or_not)?  0x8000 + (ppu.current_y_from_tiles) : 0x8800 + (ppu.current_y_from_tiles);
-    bool cond_window_enable = (check_LCDC(5))? true:false;
-    //printf("y: %u | x: %u | cond: %d\n",ppu.window_top_left.y, ppu.window_top_left.x, cond_window_enable);
-    uint8_t tilemap[65];
-    uint8_t background[32][8];
-    uint8_t window_map[32][8];
-    int i = ppu.current_LY;
-    for (int j = 0; j<65; j+=2) {
-            tilemap[j] = read_from_memory_8bit(adrr);
-            tilemap[j+1] = read_from_memory_8bit(adrr+1);
-            adrr+=8;
-    }
-    adrr = (check_LCDC(3))? 0x9C00 : 0x9800;
-    for (int j = 0; j<32; j++) {
-        uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr)  + (ppu.current_y_from_tiles): ((int8_t) read_from_memory_8bit(adrr)) + (ppu.current_y_from_tiles);
-        for (int l = 0;l < 8; l++) {
-            uint8_t cor = (uint8_t)( ( ( ( (tilemap[j]) << l) & 0b10000000) >> 6) |
-                                     ( ( ( (tilemap[j+1]  ) << l) & 0b10000000) >> 7));
-            background[j][l] = cor;
-        }
-        adrr+=8;
-    }
-    adrr = (check_LCDC(6))? 0x9C00 : 0x9800;
-    for (int j = 0; j<32; j++) {
-        uint8_t current_coord = (cond_signed_or_not)? 256 +  read_from_memory_8bit(adrr)  + (ppu.current_y_from_tiles): ((int8_t) read_from_memory_8bit(adrr)) + (ppu.current_y_from_tiles);
-        for (int l = 0;l < 8; l++) {
-            uint8_t cor = (uint8_t)( ( ( ( (tilemap[j]) << l) & 0b10000000) >> 6) |
-                                     ( ( ( (tilemap[j+1]  ) << l) & 0b10000000) >> 7));
-            window_map[j][l] = cor;
-        }
-        adrr+=8;
-    }
-    int window_screen_x = (int)ppu.window_top_left.x - 7;
-    int window_screen_y = ppu.window_top_left.y;
-
-    uint8_t scx = read_from_memory_8bit(REG_SCX);
-    uint8_t scy = read_from_memory_8bit(REG_SCY);
-    bool window_enable = check_LCDC(5);
-    uint8_t ly = ppu.current_LY;
-    for (int screen_x = 0; screen_x < 160; screen_x++) {
-
-        bool pixel_inside_window =
-            window_enable &&
-            ly >= window_screen_y &&
-            screen_x >= window_screen_x;
-
-        if (pixel_inside_window) {
-            int window_x = screen_x - window_screen_x;
-            int window_y = ly - window_screen_y;
-
-            ppu.LCDscreen[ly][screen_x] =
-                window_map[window_y][window_x];
-        }
-        else {
-            uint8_t background_x = (uint8_t)(screen_x + scx);
-            uint8_t background_y = (uint8_t)(ly + scy);
-
-            ppu.LCDscreen[ly][screen_x] =
-                background[background_y][background_x];
-        }
-    }
+    // TODO(PPU): reescrever como render_scanline(uint8_t ly).
+    // TODO(PPU): primeiro implementar apenas Background; depois Window; por último sprites.
+    // TODO(PPU): salvar somente os 160 pixels da linha atual em ppu.LCDscreen[ly][x].
 }
 
 void render_to_lcd() {
@@ -2426,89 +2335,17 @@ void render_to_lcd() {
         }
     }
     SDL_RenderPresent(renderer);
+    // TODO(SDL): remover getchar(); ele bloqueia a emulação a cada frame.
     getchar();
 }
 
 void ppu_cycles_Verify() {
-    ppu.window_top_left.y  = read_from_memory_8bit(0xFF4A);
-    ppu.window_top_left.x  = read_from_memory_8bit(0xFF4B);
-    bool cond_render = false;
-    printf("current LY: %u | current cycles: %u | current CPU cycles: %u\n", ppu.current_LY, ppu.contador_ciclos, cpu.contador_ciclos);
-    (compare_lyc_ly())? (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) | 0b00000100)) : (write_into_memory_8bit(REG_STAT,read_from_memory_8bit(REG_STAT) & 0b11111011));
-    if (ppu.contador_ciclos < (uint16_t) 80 && ppu.current_LY < 144) {
-        if (cond_estado_2_da_ppu_foi_mudado) {
-            set_ppu_mode(2);
-            cond_estado_2_da_ppu_foi_mudado = false;
-        }
-        if (get_STAT_mode((3))) {
-            cond_start_STAT = true;
-        }
-    }
-    if (ppu.contador_ciclos >= 80 && ppu.contador_ciclos < 252 && ppu.current_LY < 144) {
-        if (cond_estado_3_da_ppu_foi_mudado) {
-            set_ppu_mode(3);
-            cond_estado_3_da_ppu_foi_mudado = false;
-        }
-    }
-
-    if (ppu.contador_ciclos >= 252 && ppu.contador_ciclos < 456 && ppu.current_LY < 144) {
-        if (cond_estado_0_da_ppu_foi_mudado) {
-            set_ppu_mode(0);
-            cond_estado_0_da_ppu_foi_mudado = false;
-        }
-        if (get_STAT_mode((3))) {
-            cond_start_STAT = true;
-        }
-    }
-    else {
-        if (ppu.current_LY == 144 ) {
-            if (cond_estado_1_da_ppu_foi_mudado) {
-                set_ppu_mode(1);
-                cond_estado_1_da_ppu_foi_mudado = false;
-            }
-            if (get_STAT_mode((4))) {
-                cond_start_STAT = true;
-            }
-        }
-    }
-    while (ppu.contador_ciclos >= (uint16_t) 456) {
-        ppu.contador_ciclos -= (uint16_t) 456;
-        ppu.current_LY++;
-        ppu.current_y_from_tiles++;
-        update_LY();
-        if (get_STAT_mode((6)) && compare_lyc_ly()) {
-            cond_start_STAT = true;
-        }
-        if (ppu.current_LY<144) translate_to_LCD();
-        if (ppu.current_LY >= (uint16_t) 144 && ppu.current_LY < (uint16_t) 153) {
-            //load_tile_data();
-            //load_background_and_window_();
-            cond_start_vblank = true;
-            ppu.frame_ready = true;
-        }
-        if (ppu.current_LY >= (uint16_t) 153) {
-            ppu.current_y_from_tiles=0;
-            //render_to_lcd();
-            cond_estado_0_da_ppu_foi_mudado = true;
-            cond_estado_1_da_ppu_foi_mudado = true;
-            cond_estado_2_da_ppu_foi_mudado = true;
-            cond_estado_3_da_ppu_foi_mudado = true;
-            ppu.current_LY = -1;
-            update_LY();
-            cond_start_vblank = false;
-            cond_start_STAT = false;
-            cond_ja_foi_STAT = false;
-            cond_ja_foi_vblank = false;
-            ppu.frame_ready = false;
-            set_interrupt(0,false);
-            cond_render = true;
-        }
-    }
-    if (cond_render) {
-        render_to_lcd();
-        //printf("ola\n");
-        cond_render = false;
-    }
+    // TODO(PPU): reimplementar o avanço da PPU consumindo os ciclos recebidos da CPU.
+    // TODO(PPU): controlar LY de 0 a 153 e os modos 2 -> 3 -> 0 nas linhas visíveis.
+    // TODO(PPU): entrar em VBlank ao chegar em LY=144 e solicitar a interrupção uma única vez.
+    // TODO(PPU): finalizar/renderizar a scanline visível antes de incrementar LY.
+    // TODO(PPU): atualizar STAT/LYC por borda de subida, sem depender de comparações exatas de ciclo.
+    // TODO(PPU): quando o frame terminar, marcar frame_ready e chamar render_to_lcd fora do pipeline de pixels.
 }
 
 
@@ -2544,7 +2381,9 @@ int main(void) {
 
                 printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
                                  "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |                |\n", memory.game_rom[cpu.PC], cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
-                if (cpu.is_halted) {
+                // TODO(CPU): revisar o encadeamento abaixo; o segundo if possui um else próprio,
+            // TODO(CPU): então a CPU pode passar pelo bloco HALT e ainda executar uma instrução na mesma iteração.
+            if (cpu.is_halted) {
                     incrementar_ciclos(4);
                     cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
                     check_cycle_counter();
@@ -2591,6 +2430,7 @@ int main(void) {
         static uint8_t old_state = 0xFF;
         static uint8_t old_timer = 0xFF;
 
+        // TODO(SDL): processar SDL_PollEvent para permitir fechar a janela normalmente.
         while (1) {
 
             //uint8_t state = read_from_memory_8bit(0xFFE1);
