@@ -2807,7 +2807,7 @@ int main(int argc, char*argv[]) {
             printf("|                                                                                                                                                                          |\n");
             while (read_from_memory_8bit(cpu.PC)!=0x10) {
                 //if (curr_operation==0) printf("\n\n0x%04x\n\n",read_from_memory_8bit(0xC000));
-                usleep(2000);
+                //usleep(2000);
                 printf("|_________________________________________________________________________________________________________________________________________________________________________|\n");
 
                 printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
