@@ -1,0 +1,40 @@
+name: Build Windows
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-SDL2
+
+      - name: Compile
+        run: |
+          gcc gameboy.c -o gameboy.exe $(sdl2-config --cflags --libs)
+
+      - name: Prepare
+        run: |
+          mkdir build
+          cp gameboy.exe build/
+          cp /ucrt64/bin/SDL2.dll build/
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: gameboy-windows
+          path: build/
