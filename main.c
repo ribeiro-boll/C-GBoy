@@ -5,6 +5,7 @@
 #include <string.h>
 //#include <threads.h>
 //#include <unistd.h>
+#include <time.h>
 #include <SDL2/SDL.h>
 // bits    mais clara
 // 00    Cor 0: #9BBC0F  VVV
@@ -122,6 +123,16 @@ bool cond_estado_3_da_ppu_foi_mudado = true;
 bool cond_estado_2_da_ppu_foi_mudado = true;
 bool cond_estado_1_da_ppu_foi_mudado = true;
 bool cond_estado_0_da_ppu_foi_mudado = true;
+
+bool on_left_button = false;
+bool on_right_button = false;
+bool on_down_button = false;
+bool on_up_button = false;
+
+bool on_A_button = false;
+bool on_B_button = false;
+bool on_select_button = false;
+bool on_start_button = false;
 
 GB_PPU ppu;
 GB_reg cpu;
@@ -597,6 +608,39 @@ uint8_t read_MBC2(uint16_t endereco) {
 uint8_t read_MBC3(uint16_t endereco) {
     return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
 }
+void write_into_memory_8bit(uint16_t address, uint8_t variable) {
+    // TODO(MEM): implementar escrita no Echo RAM (0xE000-0xFDFF).
+    // TODO(IO): tratar registradores especiais individualmente (DIV, LY, IF, etc.).
+    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
+    //if (address >= 0x4000  && 0x7FFF >= address) {
+    //switch (memory.MBC_type) {
+    //    case 0x00: memory.game_rom[address] = variable;
+    //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
+    //     case 0x02:  return read_MBC1(address);
+    //     case 0x03:  return read_MBC1(address);
+    //}
+    //}
+    if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
+    else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
+    else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
+    else if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
+    else if (address >= 0xFF00 && 0xFF7F >= address) {
+        if (address == 0xFF46) {
+            memory.IO[0x46] = variable;
+            cpu.DMA_transfer_pending = true;
+            cpu.DMA_transfer_curr_addr = extract_adress(variable, 0x00);
+            //system("clear");
+            //scan_OAM();
+            //getchar();
+            cpu.DMA_transfer_limit_addr = cpu.DMA_transfer_curr_addr + 160;
+            cpu.DMA_transfer_OAM_addr = 0xFE00;
+        }
+        else memory.IO[address - 0xFF00] = variable;
+    }
+    else if (address >= 0xFF80 && 0xFFFE >= address) memory.HRAM[address - 0xFF80] = variable;
+    else if (address == 0xFFFF) memory.IE = variable;
+}
+
 uint8_t read_from_memory_8bit(uint16_t address) {
     // TODO(MEM): validar limites da ROM antes de indexar memory.game_rom.
     // if (address == 0xFF44 && cpu.PC == 0x2828) return 0x91;
@@ -615,8 +659,27 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
     if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
     if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
-    //if (address == 0xFF00) return 0b00001111;
+    if (address == 0xFF00) {
+        uint8_t joypad = memory.IO[0];
+        if (joypad & 0b00100000) {
+            uint8_t dummy = joypad & 0b11111111;
+            dummy = (on_down_button)?   dummy & 0b11110111 : dummy | 0b00001000;
+            dummy = (on_up_button)?     dummy & 0b11111011 : dummy | 0b00000100;
+            dummy = (on_left_button)?   dummy & 0b11111101 : dummy | 0b00000010;
+            dummy = (on_right_button)?  dummy & 0b11111110 : dummy | 0b00000001;
+            return dummy;
+        }
+        else if (joypad & 0b00010000) {
+            uint8_t dummy = joypad & 0b11111111;
+            dummy = (on_start_button)?  dummy & 0b11110111 : dummy | 0b00001000;
+            dummy = (on_select_button)? dummy & 0b11111011 : dummy | 0b00000100;
+            dummy = (on_B_button)?      dummy & 0b11111101 : dummy | 0b00000010;
+            dummy = (on_A_button)?      dummy & 0b11111110 : dummy | 0b00000001;
+            return dummy;
+        }
+    }
     if (address >= 0xFF00 && 0xFF7F >= address) return memory.IO[address - 0xFF00];
+    if (address == 0xFF91) return 0xFF;
     if (address >= 0xFF80 && 0xFFFE >= address) return memory.HRAM[address - 0xFF80];
     if (address == 0xFFFF) return memory.IE;
     return 0;
@@ -642,38 +705,6 @@ void write_into_memory_8bit_DMA(uint16_t address, uint8_t variable) {
             memory.IO[0x46] = variable;
             cpu.DMA_transfer_pending = true;
             cpu.DMA_transfer_curr_addr = extract_adress(variable, 0x00);
-            cpu.DMA_transfer_limit_addr = cpu.DMA_transfer_curr_addr + 160;
-            cpu.DMA_transfer_OAM_addr = 0xFE00;
-        }
-        else memory.IO[address - 0xFF00] = variable;
-    }
-    else if (address >= 0xFF80 && 0xFFFE >= address) memory.HRAM[address - 0xFF80] = variable;
-    else if (address == 0xFFFF) memory.IE = variable;
-}
-void write_into_memory_8bit(uint16_t address, uint8_t variable) {
-    // TODO(MEM): implementar escrita no Echo RAM (0xE000-0xFDFF).
-    // TODO(IO): tratar registradores especiais individualmente (DIV, LY, IF, etc.).
-    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
-    //if (address >= 0x4000  && 0x7FFF >= address) {
-         //switch (memory.MBC_type) {
-         //    case 0x00: memory.game_rom[address] = variable;
-         //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-         //     case 0x02:  return read_MBC1(address);
-         //     case 0x03:  return read_MBC1(address);
-        //}
-    //}
-    if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
-    else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
-    else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
-    else if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
-    else if (address >= 0xFF00 && 0xFF7F >= address) {
-        if (address == 0xFF46) {
-            memory.IO[0x46] = variable;
-            cpu.DMA_transfer_pending = true;
-            cpu.DMA_transfer_curr_addr = extract_adress(variable, 0x00);
-            //system("clear");
-            //scan_OAM();
-            //getchar();
             cpu.DMA_transfer_limit_addr = cpu.DMA_transfer_curr_addr + 160;
             cpu.DMA_transfer_OAM_addr = 0xFE00;
         }
@@ -2310,6 +2341,7 @@ void clear_registers() {
     cpu.DMA_transfer_curr_addr = 0;
     cpu.DMA_transfer_limit_addr = 0;
     cpu.DMA_transfer_OAM_addr = 0xFE00;
+    write_into_memory_8bit(0xFF40, 0x91);
 }
 /*
  * Renderização ainda não implementada.
@@ -2859,23 +2891,13 @@ int main(int argc, char*argv[]) {
         static uint8_t old_state = 0xFF;
         static uint8_t old_timer = 0xFF;
         SDL_Event event;
-        // TODO(SDL): processar SDL_PollEvent para permitir fechar a janela normalmente.
-        bool on_left_button = false;
-        bool on_right_button = false;
-        bool on_down_button = false;
-        bool on_up_button = false;
-
-        bool on_A_button = false;
-        bool on_B_button = false;
-        bool on_select_button = false;
-        bool on_start_button = false;
-        write_into_memory_8bit(0xFF00, 0b00001111);
+        write_into_memory_8bit(0xFF00, 0b00101111);
         while (1) {
+            if (vblank_start_joypad) {
+                vblank_start_joypad = false;
+                //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
 
-                if (vblank_start_joypad) {
-                    vblank_start_joypad = false;
-                    while (SDL_PollEvent(&event)) {
-
+                while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_KEYUP) {
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
@@ -2931,23 +2953,7 @@ int main(int argc, char*argv[]) {
                     }
                 }
             }
-            uint8_t joypad = read_from_memory_8bit(0xFF00);
-            if (joypad & 0b00100000) {
-                uint8_t dummy = joypad & 0b11110000;
-                dummy = (on_down_button)?   dummy & 0b11110111 : dummy | 0b00001000;
-                dummy = (on_up_button)?     dummy & 0b11111011 : dummy | 0b00000100;
-                dummy = (on_left_button)?   dummy & 0b11111101 : dummy | 0b00000010;
-                dummy = (on_right_button)?  dummy & 0b11111110 : dummy | 0b00000001;
-                write_into_memory_8bit(0xFF00, dummy);
-            }
-            else if (joypad & 0b00010000) {
-                uint8_t dummy = joypad & 0b11110000;
-                dummy = (on_start_button)?  dummy & 0b11110111 : dummy | 0b00001000;
-                dummy = (on_select_button)? dummy & 0b11111011 : dummy | 0b00000100;
-                dummy = (on_B_button)?      dummy & 0b11111101 : dummy | 0b00000010;
-                dummy = (on_A_button)?      dummy & 0b11111110 : dummy | 0b00000001;
-                write_into_memory_8bit(0xFF00, dummy);
-            }
+
             //
             //uint8_t state = read_from_memory_8bit(0xFFE1);
             //uint8_t timer = read_from_memory_8bit(0xFFA6);
