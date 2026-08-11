@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
-#include <unistd.h>
+//#include <unistd.h>
 #include <SDL2/SDL.h>
 // bits    mais clara
 // 00    Cor 0: #9BBC0F  VVV
@@ -33,9 +33,10 @@ typedef struct sprite {
     uint8_t coord_y;
     uint8_t coord_x;
     uint8_t tile_ID;
+    uint8_t tile_ID_8x16;
     uint8_t attributes;
 } Sprite;
-Sprite sprite_bank[40];
+//Sprite sprite_bank[40];
 
 uint32_t colors[] = {0x9BBC0F,0x8BAC0F,0x306230,0x0F380F};
 
@@ -93,6 +94,8 @@ typedef struct GB_PPU {
     uint8_t current_LY;
     uint8_t LCDscreen[144][160];
     uint8_t LCDscreen_pixel_color[144][160];
+    Sprite sprite_bank[10];
+    uint8_t sprite_count;
     // mode 0 blank horizontal
     // mode 1 vblank | blank vertical
     // mode 2 OAM scan | prep para o modo 3
@@ -106,6 +109,8 @@ typedef struct GB_PPU {
     Pixel_coords window_top_left;
     uint16_t contador_ciclos;
 } GB_PPU;
+
+bool vblank_start_joypad = true;
 
 bool cond_start_vblank = false;
 bool cond_ja_foi_vblank = false;
@@ -126,9 +131,6 @@ SDL_Window *screen = NULL;
 SDL_Surface *screenSurface = NULL;
 SDL_Renderer *renderer = NULL;
 
-SDL_Window *screen2 = NULL;
-SDL_Surface *screenSurface2 = NULL;
-SDL_Renderer *renderer_OAM = NULL;
 // ------------------ begin debug -----------
 bool cond_first_run = true;
 bool cond_debug = false;
@@ -613,7 +615,7 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
     if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
     if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
-    if (address == 0xFF00) return 0b00001111;
+    //if (address == 0xFF00) return 0b00001111;
     if (address >= 0xFF00 && 0xFF7F >= address) return memory.IO[address - 0xFF00];
     if (address >= 0xFF80 && 0xFFFE >= address) return memory.HRAM[address - 0xFF80];
     if (address == 0xFFFF) return memory.IE;
@@ -2341,10 +2343,220 @@ void render_to_lcd() {
     }
 }
 
+// primera etapa, busca na OAM da scanline atual
+/*.
+Byte   Attributes/Fags
+       
+Attributes Priority Y�fip X�fip DMG�paette Bank CGB�paette
+• Priority 0  No, 1  BG and Window coor indices 1 are drawn over this OBJ
+• Y fip 0  Norma, 1  Entire OBJ is verticay mirrored
+• X fip 0  Norma, 1  Entire OBJ is horizontay mirrored
+• DMG paette Non CGB Mode ony 0  OBP, 1  OBP1
+• Bank CGB Mode Ony 0  Fetch tie from VRAM bank , 1  Fetch tie from
+VRAM bank 1
+• CGB paette CGB Mode Ony Which of OBP7 to use
+*/
+void oam_scan() {
+    //int contador_de_obj = 0;
+    uint16_t endereco_sprite = 0xFE00;
+    uint8_t current_ly = get_curr_LY();
+    uint8_t curr_obj_y;
+    uint8_t curr_obj_x;
+    bool is_8x16;
+    ppu.sprite_count = 0;
+    for (int i = 0; i < 10; i++) {
+        ppu.sprite_bank[i].attributes = 0;
+        ppu.sprite_bank[i].tile_ID_8x16 = 0;
+        ppu.sprite_bank[i].tile_ID = 0;
+        ppu.sprite_bank[i].coord_x = 0;
+        ppu.sprite_bank[i].coord_y = 0;
+    }
+    for (int i = 0; i < 160 && ppu.sprite_count<10; i+=4) {
+        curr_obj_y = read_from_memory_8bit(endereco_sprite+i);
+        curr_obj_x = read_from_memory_8bit(endereco_sprite+i+1);
+        is_8x16 = check_LCDC(2);
+        int16_t result = ((int16_t)current_ly) - (((int16_t)curr_obj_y) - 16);
+        if (1){
+            if (is_8x16) {
+                //printf("teste\n");
+                if (result < 16 && result >= 0) {
+                    ppu.sprite_bank[ppu.sprite_count].coord_y      =  curr_obj_y;
+                    ppu.sprite_bank[ppu.sprite_count].coord_x      =  curr_obj_x;
+                    ppu.sprite_bank[ppu.sprite_count].tile_ID      =  read_from_memory_8bit(endereco_sprite+i+2) & 0b11111110;
+                    ppu.sprite_bank[ppu.sprite_count].tile_ID_8x16 =  ppu.sprite_bank[ppu.sprite_count].tile_ID + 1;
+                    ppu.sprite_bank[ppu.sprite_count].attributes   =  read_from_memory_8bit(endereco_sprite+i+3);
+                    ppu.sprite_count++;
+                }
+            }
+            else {
+                if (result < 8 && result >= 0) {
+                    ppu.sprite_bank[ppu.sprite_count].coord_y      =  curr_obj_y;
+                    ppu.sprite_bank[ppu.sprite_count].coord_x      =  curr_obj_x;
+                    ppu.sprite_bank[ppu.sprite_count].tile_ID      =  read_from_memory_8bit(endereco_sprite+i+2);
+                    ppu.sprite_bank[ppu.sprite_count].attributes   =  read_from_memory_8bit(endereco_sprite+i+3);
+                    ppu.sprite_count++;
+                }
+            }
+        }
+    }
+}
+
+void draw_sprite_pixels(int16_t start_index, bool prioridade_BG, bool **pixel_in_X_axis_claimed, int j, bool *pode_desenhar, uint8_t color_byte1, uint8_t color_byte2, uint8_t paleta, uint8_t curr_LY, bool x_flip) {
+    if ((start_index >= 0)) {
+        uint8_t low_bit, high_bit;
+        if (!((*pixel_in_X_axis_claimed)[start_index])) {
+            *pode_desenhar = true;
+        }
+        if (*pode_desenhar){
+            if (x_flip) {
+                low_bit  = (color_byte1 << (7-j) & 0b10000000) >> 7;
+                high_bit = (color_byte2 << (7-j) & 0b10000000) >> 6;
+            }
+            else {
+                low_bit  = (color_byte1 << (j) & 0b10000000) >> 7;
+                high_bit = (color_byte2 << (j) & 0b10000000) >> 6;
+            }
+            uint8_t color = (high_bit|low_bit);//printf("color = %u\n", color);
+            if (color != 0) {
+                (*pixel_in_X_axis_claimed)[start_index] = true;
+                uint8_t shade = (paleta) ? (read_from_memory_8bit(0xFF49) >> (color * 2)) & 0x03 :  (read_from_memory_8bit(0xFF48) >> (color * 2)) & 0x03;
+                if (!(prioridade_BG))ppu.LCDscreen[curr_LY][start_index] = shade;
+                else {
+                    if (ppu.LCDscreen_pixel_color[curr_LY][start_index] == 0) ppu.LCDscreen[curr_LY][start_index] = shade;
+                }
+            }
+        }
+    }
+}
 
 void render_sprites_in_line() {
+    uint16_t default_addr = 0x8000;
+    uint16_t tile_addr;
+    int16_t x_coord;
+    int16_t y_coord;
+    uint8_t curr_LY = get_curr_LY(), curr_tile_ly;
+    uint8_t color_byte1, color_byte2;
+    bool prioridade_BG;
+    bool y_flip;
+    bool x_flip;
+    bool paleta;
+    bool pode_desenhar;
+    uint8_t sprite_tile[8];
+    int16_t start_index;
+    uint8_t tile_pixel_x;
+    uint8_t color, high_bit, low_bit, shade;
+    bool *pixel_in_X_axis_claimed = NULL;
+    pixel_in_X_axis_claimed = malloc(sizeof(bool) * 160);
+    for (int i = 0; i < 160; i++) pixel_in_X_axis_claimed[i] = false;
+    for (int i = 0; i < ppu.sprite_count; i++) {
+        pode_desenhar = false;
+        prioridade_BG = (ppu.sprite_bank[i].attributes & 0b10000000);
+        y_flip = (ppu.sprite_bank[i].attributes & 0b01000000);
+        x_flip = (ppu.sprite_bank[i].attributes & 0b00100000);
+        paleta = (ppu.sprite_bank[i].attributes & 0b00010000);
+        x_coord = ppu.sprite_bank[i].coord_x -  8;
+        y_coord = ppu.sprite_bank[i].coord_y - 16;
+        curr_tile_ly = curr_LY - y_coord;
+        tile_addr = (y_flip)? default_addr + ((ppu.sprite_bank[i].tile_ID * 16) + (16 - (2*(curr_tile_ly +1)))) : default_addr + ((ppu.sprite_bank[i].tile_ID * 16) + ((2*(curr_tile_ly))));
+        // ppu.LCDscreen_pixel_color[curr_ly][i] = color_bit;
+        // ppu.LCDscreen[curr_ly][i] = shade;
 
+        if (x_coord < 0) {
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; j < 8; j++) {
+                //
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+        else if (x_coord>=160) {
+            start_index = x_coord;
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; (j < 8 && start_index < 168); j++) {
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+        else {
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; j < 8 ; j++) {
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+    }
+    free(pixel_in_X_axis_claimed);
 }
+
+// sprites 8x16
+// tiles vem em seguida
+void render_sprites_in_line_8x16() {
+    uint16_t default_addr = 0x8000;
+    uint16_t tile_addr;
+    int16_t x_coord;
+    int16_t y_coord;
+    int16_t curr_LY = get_curr_LY(), curr_tile_ly;
+    uint8_t color_byte1, color_byte2;
+    bool prioridade_BG;
+    bool y_flip;
+    bool x_flip;
+    bool paleta;
+    bool pode_desenhar;
+    int16_t start_index;
+    bool *pixel_in_X_axis_claimed = NULL;
+    pixel_in_X_axis_claimed = malloc(sizeof(bool) * 160);
+    for (int i = 0; i < 160; i++) pixel_in_X_axis_claimed[i] = false;
+    for (int i = 0; i < ppu.sprite_count; i++) {
+        pode_desenhar = false;
+        prioridade_BG = (ppu.sprite_bank[i].attributes & 0b10000000);
+        y_flip = (ppu.sprite_bank[i].attributes & 0b01000000);
+        x_flip = (ppu.sprite_bank[i].attributes & 0b00100000);
+        paleta = (ppu.sprite_bank[i].attributes & 0b00010000);
+        x_coord = ppu.sprite_bank[i].coord_x -  8;
+        y_coord = ppu.sprite_bank[i].coord_y - 16;
+        curr_tile_ly = curr_LY - y_coord;
+        if (curr_tile_ly < 8) {
+            tile_addr = (y_flip)? default_addr + ((ppu.sprite_bank[i].tile_ID_8x16 * 16) + (16 - (2*(curr_tile_ly+1))))  : default_addr + ((ppu.sprite_bank[i].tile_ID * 16) + ((2*curr_tile_ly)));
+        }
+        else {
+            curr_tile_ly-=8;
+            tile_addr = (y_flip)? default_addr + ((ppu.sprite_bank[i].tile_ID * 16) + (16 - (2*(curr_tile_ly+1)))) : default_addr + ((ppu.sprite_bank[i].tile_ID_8x16 * 16) + ((2*curr_tile_ly)));
+        }
+        // ppu.LCDscreen_pixel_color[curr_ly][i] = color_bit;
+        // ppu.LCDscreen[curr_ly][i] = shade;
+        //printf("teste!\n");
+        if (x_coord < 0) {
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; j < 8; j++) {
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+        else if (x_coord>=160) {
+            start_index = x_coord;
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; (j < 8 && start_index < 168); j++) {
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+        else {
+            color_byte1 = read_from_memory_8bit(tile_addr);
+            color_byte2 = read_from_memory_8bit(tile_addr+1);
+            for (int j = 0; j < 8 ; j++) {
+                start_index = x_coord + j;
+                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
+            }
+        }
+    }
+    free(pixel_in_X_axis_claimed);
+}
+
 
 void render_scanline() {
     bool cond_window_on = check_LCDC(5);
@@ -2446,6 +2658,7 @@ void render_scanline() {
         if (cond_update_window) ppu.current_LY_from_window++;
     }
 }
+
 void ppu_cycles_Verify() {
     /*
      * Fecha a scanline atual.
@@ -2462,6 +2675,7 @@ void ppu_cycles_Verify() {
         ppu.executou_modo_0 = false;
         ppu.executou_modo_2 = false;
         ppu.executou_modo_3 = false;
+        //vblank_start_joypad = false;
         ppu.executou_ly_lyc = false;
         if (get_curr_LY() == 153) {
             ppu.current_LY_from_window = 0;
@@ -2500,8 +2714,12 @@ void ppu_cycles_Verify() {
          * A renderização ainda não entra aqui
          */
         else if (80 <= ppu.contador_ciclos && ppu.contador_ciclos < (80 + 172) && !ppu.executou_modo_3) {
+            oam_scan();
             set_ppu_mode(3);
             render_scanline();
+            if (check_LCDC(1)){
+                (check_LCDC(2))? render_sprites_in_line_8x16() : render_sprites_in_line();
+            }
             ppu.executou_modo_3 = true;
         }
 
@@ -2531,6 +2749,7 @@ void ppu_cycles_Verify() {
             SDL_RenderClear(renderer);
             render_to_lcd();
             SDL_RenderPresent(renderer);
+            vblank_start_joypad = true;
             if (get_STAT_mode(4)) {
                 set_interrupt(1, true);
             }
@@ -2557,26 +2776,26 @@ void DMA_transfer_Verify(uint8_t ciclos) {
     }
 }
 
-int main(void) {
+int main(int argc, char*argv[]) {
     if (SDL_Init(SDL_INIT_EVERYTHING)!=0) {
         perror("SDL nao inicializou");
         SDL_Quit();
     }
-    SDL_CreateWindowAndRenderer(160, 288, SDL_WINDOW_SHOWN, &screen2, &renderer_OAM);
-    if (screen2 == NULL) {
-        SDL_DestroyWindow(screen2);
-    }
+    // SDL_CreateWindowAndRenderer(160, 288, SDL_WINDOW_SHOWN, &screen2, &renderer_OAM);
+    // if (screen2 == NULL) {
+    //     SDL_DestroyWindow(screen2);
+    // }
     SDL_CreateWindowAndRenderer(160, 144, SDL_WINDOW_SHOWN, &screen, &renderer);
     if (screen == NULL) {
         SDL_DestroyWindow(screen);
     }
     screenSurface = SDL_GetWindowSurface(screen);
-    screenSurface2 = SDL_GetWindowSurface(screen2);
-    SDL_RenderPresent(renderer_OAM);
-    SDL_FillRect(screenSurface2, NULL, 0x000000);
+    // screenSurface2 = SDL_GetWindowSurface(screen2);
+    // SDL_RenderPresent(renderer_OAM);
+    // SDL_FillRect(screenSurface2, NULL, 0x000000);
     uint16_t temporary_PC_addr = 0x0000;
     clear_registers();
-    char* path_rom = "/home/bolota/CLionProjects/gameboy-from-scratch/tetris.gb";
+    char* path_rom = argv[1];
     if (!cond_debug) start_game(path_rom);
     //printf("Gameboy ROM size: %d\n", memory.game_rom_lenght);
     int curr_operation = 0;
@@ -2594,8 +2813,8 @@ int main(void) {
                 printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
                                  "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |                |\n", read_from_memory_8bit(cpu.PC), cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
                 // TODO(CPU): revisar o encadeamento abaixo; o segundo if possui um else próprio,
-            // TODO(CPU): então a CPU pode passar pelo bloco HALT e ainda executar uma instrução na mesma iteração.
-            if (cpu.is_halted) {
+                // TODO(CPU): então a CPU pode passar pelo bloco HALT e ainda executar uma instrução na mesma iteração.
+                if (cpu.is_halted) {
                     incrementar_ciclos(4);
                     cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
                     check_cycle_counter();
@@ -2631,7 +2850,7 @@ int main(void) {
         }
     }
     else {
-        printf("\n\n[> Current ROM: %40s <]\n",path_rom);
+        printf("\n\n[> Current ROM: %15s <]\n",path_rom);
         bool cond_go = true;
         //int cond = 0;
         //long int count = 0;
@@ -2639,14 +2858,101 @@ int main(void) {
         //memory.IO[0] = 0b00001111;
         static uint8_t old_state = 0xFF;
         static uint8_t old_timer = 0xFF;
-
+        SDL_Event event;
         // TODO(SDL): processar SDL_PollEvent para permitir fechar a janela normalmente.
+        bool on_left_button = false;
+        bool on_right_button = false;
+        bool on_down_button = false;
+        bool on_up_button = false;
+
+        bool on_A_button = false;
+        bool on_B_button = false;
+        bool on_select_button = false;
+        bool on_start_button = false;
+        write_into_memory_8bit(0xFF00, 0b00001111);
         while (1) {
 
+                if (vblank_start_joypad) {
+                    vblank_start_joypad = false;
+                    while (SDL_PollEvent(&event)) {
+
+                    if (event.type == SDL_KEYUP) {
+                        switch (event.key.keysym.sym) {
+                            case SDLK_LEFT:
+                                on_left_button = false; break;
+                                // <- esquerda
+                            case SDLK_RIGHT:
+                                on_right_button = false; break;
+                                // direita ->
+                            case SDLK_UP:
+                                on_up_button = false; break;
+                            case SDLK_DOWN:
+                                on_down_button = false; break;
+                            case SDLK_a:
+                                on_A_button = false; break;
+                                // botão A
+                            case SDLK_b:
+                                on_B_button = false; break;
+                                // botão B
+                            case SDLK_z:
+                                on_select_button = false; break;
+                                // botão select
+                            case SDLK_x:
+                                on_start_button = false; break;
+                                //botão start
+                        }
+                    }
+                    if (event.type == SDL_KEYDOWN) {
+                        switch (event.key.keysym.sym) {
+                            case SDLK_LEFT:
+                                on_left_button = true; break;
+                                // <- esquerda
+                            case SDLK_RIGHT:
+                                on_right_button = true; break;
+                                // direita ->
+                            case SDLK_UP:
+                                on_up_button = true; break;
+                            case SDLK_DOWN:
+                                on_down_button = true; break;
+
+                            case SDLK_a:
+                                on_A_button = true; break;
+                                // botão A
+                            case SDLK_b:
+                                on_B_button = true; break;
+                                // botão B
+                            case SDLK_z:
+                                on_select_button = true; break;
+                                // botão select
+                            case SDLK_x:
+                                on_start_button = true; break;
+                                //botão start
+                        }
+                    }
+                }
+            }
+            uint8_t joypad = read_from_memory_8bit(0xFF00);
+            if (joypad & 0b00100000) {
+                uint8_t dummy = joypad & 0b11110000;
+                dummy = (on_down_button)?   dummy & 0b11110111 : dummy | 0b00001000;
+                dummy = (on_up_button)?     dummy & 0b11111011 : dummy | 0b00000100;
+                dummy = (on_left_button)?   dummy & 0b11111101 : dummy | 0b00000010;
+                dummy = (on_right_button)?  dummy & 0b11111110 : dummy | 0b00000001;
+                write_into_memory_8bit(0xFF00, dummy);
+            }
+            else if (joypad & 0b00010000) {
+                uint8_t dummy = joypad & 0b11110000;
+                dummy = (on_start_button)?  dummy & 0b11110111 : dummy | 0b00001000;
+                dummy = (on_select_button)? dummy & 0b11111011 : dummy | 0b00000100;
+                dummy = (on_B_button)?      dummy & 0b11111101 : dummy | 0b00000010;
+                dummy = (on_A_button)?      dummy & 0b11111110 : dummy | 0b00000001;
+                write_into_memory_8bit(0xFF00, dummy);
+            }
+            //
             //uint8_t state = read_from_memory_8bit(0xFFE1);
             //uint8_t timer = read_from_memory_8bit(0xFFA6);
             //if (state != old_state || timer != old_timer) {
-                //printf("STATE=%02X TIMER=%02X PC=%04X LY=%02X FF85=%02X\n",state,timer,cpu.PC,read_from_memory_8bit(0xFF44),read_from_memory_8bit(0xFF85));old_state = state;old_timer = timer;
+            //printf("STATE=%02X TIMER=%02X PC=%04X LY=%02X FF85=%02X\n",state,timer,cpu.PC,read_from_memory_8bit(0xFF44),read_from_memory_8bit(0xFF85));old_state = state;old_timer = timer;
             //}
             //render_map(false);
 
