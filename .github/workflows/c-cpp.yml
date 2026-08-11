@@ -25,7 +25,7 @@ jobs:
 
       - name: Compile
         run: |
-          gcc gameboy.c -o gameboy.exe $(sdl2-config --cflags --libs)
+          gcc main.c -o gameboy.exe $(sdl2-config --cflags --libs)
 
       - name: Prepare
         run: |
