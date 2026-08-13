@@ -838,15 +838,15 @@ void load_game_save_on_start() {
     char buffer[4096];
     switch (memory.MBC_type) {
         case 1:
+            snprintf(buffer, 4096, "%s.cartram", cpu.game_file);
+            FILE* cart_rom_file = fopen(buffer, "rb");
+            if (cart_rom_file == NULL) return;
             for (int i = 0; i<4; i++) {
-                snprintf(buffer, 4096, "%s.cartram%d", cpu.game_file, i);
-                FILE* cart_rom_file = fopen(buffer, "rb");
-                if (cart_rom_file == NULL) break;
                 for (int j = 0; j<2000;j++) {
                     memory.MBC_register.MBC1.cart_RAM[i][j] = fgetc(cart_rom_file);
                 }
-                fclose(cart_rom_file);
             }
+            fclose(cart_rom_file);
     }
 }
 
@@ -854,14 +854,14 @@ void persist_save_game_on_exit() {
     char buffer[4096];
     switch (memory.MBC_type) {
         case 1:
+            snprintf(buffer, 4096, "%s.cartram", cpu.game_file);
+            FILE* cart_rom_file = fopen(buffer, "wb");
             for (int i = 0; i<4; i++) {
-                snprintf(buffer, 4096, "%s.cartram%d", cpu.game_file, i);
-                FILE* cart_rom_file = fopen(buffer, "wb");
                 for (int j = 0; j<2000;j++) {
                     fputc(memory.MBC_register.MBC1.cart_RAM[i][j],cart_rom_file);
                 }
-                fclose(cart_rom_file);
             }
+            fclose(cart_rom_file);
     }
 }
 /*
@@ -1124,7 +1124,7 @@ void start_game(char* game_address) {
     fread(memory.game_rom, sizeof(uint8_t), memory.game_rom_lenght-1, fl);
     memory.MBC_type = memory.game_rom[0x0147];
     memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
-    //printf("0x%04x\n",memory.MBC_type);
+    printf("0x%04x\n",memory.MBC_type);
     if (memory.game_rom_lenght > 532*1024) {
 
         switch (memory.MBC_type) {
@@ -3133,6 +3133,11 @@ int main(int argc, char*argv[]) {
                                 persist_save_game_on_exit();
                                 free(memory.game_rom);
                                 //free(cpu.game_file);
+                                SDL_DestroyWindow(screen);
+                                SDL_Quit();
+                                exit(0);
+                            case SDLK_BACKSPACE:
+                                free(memory.game_rom);
                                 SDL_DestroyWindow(screen);
                                 SDL_Quit();
                                 exit(0);
