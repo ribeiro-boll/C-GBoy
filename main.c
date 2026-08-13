@@ -842,8 +842,8 @@ void load_game_save_on_start() {
             FILE* cart_rom_file = fopen(buffer, "rb");
             if (cart_rom_file == NULL) return;
             for (int i = 0; i<4; i++) {
-                for (int j = 0; j<2000;j++) {
-                    memory.MBC_register.MBC1.cart_RAM[i][j] = fgetc(cart_rom_file);
+                for (int j = 0; j<0x2000;j++) {
+                    memory.MBC_register.MBC1.cart_RAM[i][j] = (uint8_t)fgetc(cart_rom_file);
                 }
             }
             fclose(cart_rom_file);
@@ -857,7 +857,7 @@ void persist_save_game_on_exit() {
             snprintf(buffer, 4096, "%s.cartram", cpu.game_file);
             FILE* cart_rom_file = fopen(buffer, "wb");
             for (int i = 0; i<4; i++) {
-                for (int j = 0; j<2000;j++) {
+                for (int j = 0; j<0x2000;j++) {
                     fputc(memory.MBC_register.MBC1.cart_RAM[i][j],cart_rom_file);
                 }
             }
@@ -2518,12 +2518,6 @@ void clear_registers() {
     cpu.DMA_transfer_OAM_addr = 0xFE00;
     write_into_memory_8bit(0xFF40, 0x91);
 }
-/*
- * Renderização ainda não implementada.
- *
- * A partir daqui ficam apenas os pontos de entrada que você vai reescrever.
- * O controle de ciclos, modos, LY, LYC, VBlank e interrupções continua abaixo.
- */
 void SDL_SetColor0(SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 155, 188, 15, 255); // #9BBC0F
 }
@@ -2609,7 +2603,7 @@ void oam_scan() {
 }
 
 void draw_sprite_pixels(int16_t start_index, bool prioridade_BG, bool **pixel_in_X_axis_claimed, int j, bool *pode_desenhar, uint8_t color_byte1, uint8_t color_byte2, uint8_t paleta, uint8_t curr_LY, bool x_flip) {
-    if ((start_index >= 0)) {
+    if (start_index >= 0 && start_index < 160) {
         uint8_t low_bit, high_bit;
         if (!((*pixel_in_X_axis_claimed)[start_index])) {
             *pode_desenhar = true;
@@ -2678,7 +2672,7 @@ void render_sprites_in_line() {
             }
         }
 
-        else {
+        else if (x_coord < 160) {
             color_byte1 = read_from_memory_8bit(tile_addr);
             color_byte2 = read_from_memory_8bit(tile_addr+1);
             for (int j = 0; j < 8 ; j++) {
@@ -2744,7 +2738,7 @@ void render_sprites_in_line_8x16() {
             }
         }
     }
-    free(pixel_in_X_axis_claimed);
+   free(pixel_in_X_axis_claimed);
 }
 
 
@@ -2850,13 +2844,6 @@ void render_scanline() {
 }
 
 void ppu_cycles_Verify() {
-    /*
-     * Fecha a scanline atual.
-     *
-     * Este bloco fica aqui em cima. O tratamento separado de LY == 153
-     * que existia mais abaixo foi removido para LY não ser incrementado
-     * duas vezes.
-     */
     if (!check_LCDC(7)) {
         return;
     }
@@ -2878,11 +2865,6 @@ void ppu_cycles_Verify() {
         }
         increment_LY();
     }
-
-    /*
-     * Coincidência LY == LYC.
-     * A flag impede pedir repetidamente a mesma interrupção durante a linha.
-     */
     if (compare_lyc_ly() && !ppu.executou_ly_lyc) {
         if (get_STAT_mode(6)) {
             set_interrupt(1, true);
@@ -2891,9 +2873,6 @@ void ppu_cycles_Verify() {
     }
 
     if (get_curr_LY() < 144) {
-        /*
-         * Mode 2: OAM Scan.
-         */
         if (ppu.contador_ciclos < 80 && !ppu.executou_modo_2) {
             cpu.frame_start = SDL_GetPerformanceCounter();
             set_ppu_mode(2);
@@ -2902,12 +2881,6 @@ void ppu_cycles_Verify() {
             }
             ppu.executou_modo_2 = true;
         }
-
-        /*
-         * Mode 3: Pixel Transfer
-         *
-         * A renderização ainda não entra aqui
-         */
         else if (80 <= ppu.contador_ciclos && ppu.contador_ciclos < (80 + 172) && !ppu.executou_modo_3) {
             oam_scan();
             set_ppu_mode(3);
@@ -2917,10 +2890,6 @@ void ppu_cycles_Verify() {
             }
             ppu.executou_modo_3 = true;
         }
-
-        /*
-         * Mode 0: HBlank
-         */
         else if (
             (80 + 172) <= ppu.contador_ciclos && ppu.contador_ciclos < (80 + 172 + 204) && !ppu.executou_modo_0) {
             set_ppu_mode(0);
@@ -3119,11 +3088,13 @@ int main(int argc, char*argv[]) {
                                 SDL_DestroyWindow(screen);
                                 SDL_Quit();
                                 exit(0);
+                                break;
                             case SDLK_BACKSPACE:
                                 free(memory.game_rom);
                                 SDL_DestroyWindow(screen);
                                 SDL_Quit();
                                 exit(0);
+                                break;
                         }
                     }
                 }
