@@ -2997,7 +2997,7 @@ int main(int argc, char*argv[]) {
     // if (screen2 == NULL) {
     //     SDL_DestroyWindow(screen2);
     // }
-    SDL_CreateWindowAndRenderer(160, 344, SDL_WINDOW_SHOWN, &screen, &renderer);
+    SDL_CreateWindowAndRenderer(160, 144, SDL_WINDOW_SHOWN, &screen, &renderer);
     if (screen == NULL) {
         SDL_DestroyWindow(screen);
     }
