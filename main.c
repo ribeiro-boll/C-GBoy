@@ -15,8 +15,34 @@
 //   mais escura
 void set_interrupt(int bit, bool true_or_false);
 
+mbc implementation star
+typedef struct MBC1{
+    bool ram_bank_on_bool;
+    uint8_t ROM_bank_nbr;
+    uint8_t RAM_bank_nbr;
+    uint8_t banking_mode;
+    uint8_t Ram_bank_Enable_arr[0x2000];    // 0x0000 - 0x1FFF             write only
+    uint8_t Rom_bank_nmbr_arr[0x2000];      // 0x2000 - 0x3FFF             write only
+    uint8_t Ram_bank_nmbr_arr[0x2000];      // 0x4000 - 0x5FFF             write only | or Upper Bits of ROM Bank Number (Write Only)
+    uint8_t Banking_mode_select_arr[0x2000];// 0x6000 - 0x7FFF             write only
+} MBC1;
+//
+// typedef struct MBC5{
+//     uint8_t
+// } MBC2;
+//
+// typedef struct MBC5{
+//     uint8_t
+// } MBC3;
+//
+// typedef struct MBC5{
+//     uint8_t
+// } MBC5;
+
+typedef struct MBC_Root{
+    MBC1 MBC1;
+}MBC_Root;
 typedef struct Memory {
-    int game_rom_lenght;
     uint8_t MBC_type;
     uint8_t *game_rom;       // read binary da ROM intira e dar memcpy para ca
     uint8_t MBC_curr_bank;
@@ -27,6 +53,8 @@ typedef struct Memory {
     uint8_t IO[0x0080];      // inicia -> 0xFF00 | final ->0xFF7F
     uint8_t HRAM[0x007F];    // inicia -> 0xFF80 | final ->0xFFFE
     uint8_t IE;              // endereço -> 0xFFFF
+    MBC_Root MBC_register;
+    int game_rom_lenght;
 } GB_Memory;
 
 
@@ -50,13 +78,6 @@ typedef struct Reg {
     bool IME;
 
     bool DMA_transfer_pending;
-    uint16_t  DMA_transfer_OAM_addr;
-    uint16_t DMA_transfer_curr_addr;
-    uint16_t DMA_transfer_limit_addr;
-
-    uint16_t SP;
-    uint16_t PC;
-
     uint8_t A;
     uint8_t B;
     uint8_t C;
@@ -70,6 +91,13 @@ typedef struct Reg {
     uint16_t contador_ciclos;
     uint16_t contador_ciclos_div;
     uint16_t contador_ciclos_tima;
+
+    uint16_t DMA_transfer_OAM_addr;
+    uint16_t DMA_transfer_curr_addr;
+    uint16_t DMA_transfer_limit_addr;
+
+    uint16_t SP;
+    uint16_t PC;
 
     uint64_t frame_start;
     uint64_t frame_end;
@@ -606,8 +634,22 @@ void load_memory(TestProgram program) {
 uint8_t read_noMBC(uint16_t endereco) {
     return memory.game_rom[endereco];
 }
-uint8_t read_MBC1(uint16_t endereco) {
-    return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
+void MBC1_bus(uint16_t address, uint8_t value) {
+    if (address < 0x1FFF) {
+        memory.MBC_register.MBC1.Ram_bank_Enable_arr[address] = value;
+        memory.MBC_register.MBC1.ram_bank_on_bool = (value & 0b00001010) ? true : false;
+    }
+    else if (address >= 0x2000 && address <= 0x3FFF) {
+        memory.MBC_register.MBC1.Rom_bank_nmbr_arr[address-0x2000] = value;
+        uint8_t valor_processado = value & 0x00011111;
+        if (valor_processado == 0) valor_processado = 1;
+    }
+    else if (address >= 0x4000 && address <= 0x5FFF) {
+
+    }
+    else if (address >= 0x6000 && address <= 0x7FFF) {
+
+    }
 }
 uint8_t read_MBC2(uint16_t endereco) {
     return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
@@ -621,14 +663,7 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     // if (address == 0xFF44 && cpu.PC == 0x2828) return 0x91;
     // if (address == 0xFF44) return 0x94;
     if (address >= 0x0000 && 0x3FFF >= address) return memory.game_rom[address];
-    if (address >= 0x4000  && 0x7FFF >= address) {
-        switch (memory.MBC_type) {
-            case 0x00:  return read_noMBC(address);
-            case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-            case 0x02:  return read_MBC1(address);
-            case 0x03:  return read_MBC1(address);
-        }
-    }
+    if (address >= 0x4000 && 0x7FFF >= address) return memory.game_rom[address];
     if (address >= 0x8000 && 0x9FFF >= address) return memory.VRAM[address-0x8000];
     if (address >= 0xA000 && 0xBFFF >= address) return memory.cartRAM[address - 0xA000];
     if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
@@ -660,16 +695,23 @@ uint8_t read_from_memory_8bit(uint16_t address) {
 }
 void write_into_memory_8bit(uint16_t address, uint8_t variable) {
     // TODO(MEM): implementar escrita no Echo RAM (0xE000-0xFDFF).
-    // TODO(IO): tratar registradores especiais individualmente (DIV, LY, IF, etc.).
-    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
-    //if (address >= 0x4000  && 0x7FFF >= address) {
-    //switch (memory.MBC_type) {
-    //    case 0x00: memory.game_rom[address] = variable;
-    //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-    //     case 0x02:  return read_MBC1(address);
-    //     case 0x03:  return read_MBC1(address);
-    //}
-    //}
+    if (address >= 0x0000 && 0x3FFF >= address) {
+        switch (memory.MBC_type) {
+            //case 0x00: memory.game_rom[address] = variable;
+            case 0x01: MBC1_bus(address, variable); break;//TODO: implementar tipo MBC com variaveis
+            case 0x02: break;
+            case 0x03: break;
+            case 0x05: break;
+        }
+    }
+    if (address >= 0x4000  && 0x7FFF >= address) {
+        switch (memory.MBC_type) {
+            //case 0x00: memory.game_rom[address] = variable;
+            case 0x01: MBC1_bus(address, variable); break;
+            case 0x02: break;
+            case 0x03: break;
+        }
+    }
     if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
     else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
     else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
@@ -702,15 +744,6 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
 void write_into_memory_8bit_DMA(uint16_t address, uint8_t variable) {
     // TODO(MEM): implementar escrita no Echo RAM (0xE000-0xFDFF).
     // TODO(IO): tratar registradores especiais individualmente (DIV, LY, IF, etc.).
-    //if (address >= 0x0000 && 0x3FFF >= address) memory.game_rom[address] = variable;
-    //if (address >= 0x4000  && 0x7FFF >= address) {
-    //switch (memory.MBC_type) {
-    //    case 0x00: memory.game_rom[address] = variable;
-    //     case 0x01:  return read_MBC1(address);//TODO: implementar tipo MBC com variaveis
-    //     case 0x02:  return read_MBC1(address);
-    //     case 0x03:  return read_MBC1(address);
-    //}
-    //}
     if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
     else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
     else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
