@@ -2677,15 +2677,7 @@ void render_sprites_in_line() {
                 draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
             }
         }
-        else if (x_coord>=160) {
-            start_index = x_coord;
-            color_byte1 = read_from_memory_8bit(tile_addr);
-            color_byte2 = read_from_memory_8bit(tile_addr+1);
-            for (int j = 0; (j < 8 && start_index < 168); j++) {
-                start_index = x_coord + j;
-                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
-            }
-        }
+
         else {
             color_byte1 = read_from_memory_8bit(tile_addr);
             color_byte2 = read_from_memory_8bit(tile_addr+1);
@@ -2740,15 +2732,6 @@ void render_sprites_in_line_8x16() {
             color_byte2 = read_from_memory_8bit(tile_addr+1);
             for (int j = 0; j < 8; j++) {
                 start_index =(int16_t) x_coord + j;
-                draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
-            }
-        }
-        else if (x_coord>=160) {
-            start_index = x_coord;
-            color_byte1 = read_from_memory_8bit(tile_addr);
-            color_byte2 = read_from_memory_8bit(tile_addr+1);
-            for (int j = 0; (j < 8 && start_index < 168); j++) {
-                start_index = x_coord + j;
                 draw_sprite_pixels(start_index, prioridade_BG, &pixel_in_X_axis_claimed, j, &pode_desenhar, color_byte1, color_byte2, paleta, curr_LY, x_flip);
             }
         }
