@@ -15,16 +15,18 @@
 //   mais escura
 void set_interrupt(int bit, bool true_or_false);
 
-mbc implementation star
 typedef struct MBC1{
+    bool is_bigger_then_512KB;
     bool ram_bank_on_bool;
-    uint8_t ROM_bank_nbr;
-    uint8_t RAM_bank_nbr;
-    uint8_t banking_mode;
-    uint8_t Ram_bank_Enable_arr[0x2000];    // 0x0000 - 0x1FFF             write only
-    uint8_t Rom_bank_nmbr_arr[0x2000];      // 0x2000 - 0x3FFF             write only
-    uint8_t Ram_bank_nmbr_arr[0x2000];      // 0x4000 - 0x5FFF             write only | or Upper Bits of ROM Bank Number (Write Only)
-    uint8_t Banking_mode_select_arr[0x2000];// 0x6000 - 0x7FFF             write only
+    uint8_t ROM_bank_low_bits;
+    uint8_t ROM_or_RAM_bank_high_bits;
+    bool banking_1_on;
+
+    uint8_t cart_RAM[4][0x2000];
+    uint8_t Ram_bank_Enable_arr[0x2000];                // 0x0000 - 0x1FFF             write only
+    uint8_t ROM_bank_low_bits_arr[0x2000];              // 0x2000 - 0x3FFF             write only
+    uint8_t ROM_or_RAM_bank_high_bits_arr[0x2000];      // 0x4000 - 0x5FFF             write only | or Upper Bits of ROM Bank Number (Write Only)
+    uint8_t Banking_mode_select_arr[0x2000];            // 0x6000 - 0x7FFF             write only
 } MBC1;
 //
 // typedef struct MBC5{
@@ -98,7 +100,7 @@ typedef struct Reg {
 
     uint16_t SP;
     uint16_t PC;
-
+    char* game_file;
     uint64_t frame_start;
     uint64_t frame_end;
     double time_elapsed;
@@ -613,10 +615,11 @@ TestProgram tests_extra[] = {
 
 };
 // ------------------ end debug   -----------
-uint16_t extract_adress(uint8_t upper_byte, uint8_t lower_byte) {
+uint16_t extract_address(uint8_t upper_byte, uint8_t lower_byte) {
     uint16_t address = ((uint16_t)(upper_byte << 8) | (lower_byte));
     return address;
 }
+
 
 void load_memory(TestProgram program) {
     // TODO(DEBUG): revisar cond_first_run; do jeito atual ele nunca passa para false na primeira carga.
@@ -634,23 +637,53 @@ void load_memory(TestProgram program) {
 uint8_t read_noMBC(uint16_t endereco) {
     return memory.game_rom[endereco];
 }
-void MBC1_bus(uint16_t address, uint8_t value) {
+void MBC1_bus_write(uint16_t address, uint8_t value) {
+    uint8_t valor_processado;
     if (address < 0x1FFF) {
         memory.MBC_register.MBC1.Ram_bank_Enable_arr[address] = value;
-        memory.MBC_register.MBC1.ram_bank_on_bool = (value & 0b00001010) ? true : false;
+        memory.MBC_register.MBC1.ram_bank_on_bool = ((value & 0b00001111) == 0xA) ? true : false;
     }
     else if (address >= 0x2000 && address <= 0x3FFF) {
-        memory.MBC_register.MBC1.Rom_bank_nmbr_arr[address-0x2000] = value;
-        uint8_t valor_processado = value & 0x00011111;
+        memory.MBC_register.MBC1.ROM_bank_low_bits_arr[address-0x2000] = value;
+        valor_processado = value & 0b00011111;
         if (valor_processado == 0) valor_processado = 1;
+        memory.MBC_register.MBC1.ROM_bank_low_bits = valor_processado;
     }
     else if (address >= 0x4000 && address <= 0x5FFF) {
-
+        valor_processado = value & 0b00000011;
+        memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits_arr[address-0x4000] = value;
+        memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits = valor_processado;
     }
     else if (address >= 0x6000 && address <= 0x7FFF) {
-
+        memory.MBC_register.MBC1.Ram_bank_Enable_arr[address-0x6000] = value;
+        memory.MBC_register.MBC1.banking_1_on = value & 0b00000011;
+    }
+    else if (address >= 0xA000 && address <= 0xBFFF) {
+        if (!memory.MBC_register.MBC1.is_bigger_then_512KB) {
+            memory.MBC_register.MBC1.cart_RAM[memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits][address - 0xA000] = value;
+        }
+        else memory.MBC_register.MBC1.cart_RAM[0][address - 0xA000] = value;
     }
 }
+
+uint8_t MBC1_bus_read(uint16_t address) {
+    uint8_t valor_processado;
+    if (address < 0x3FFF) {
+        return (memory.MBC_register.MBC1.banking_1_on) ? memory.game_rom[(memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits <<16) | address] : memory.game_rom[address];
+    }
+    if (address >= 0x4000 && address <= 0x7FFF) {
+        uint32_t true_address = (memory.MBC_register.MBC1.banking_1_on) ? (((memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits<<5) | memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address - 0x4000) : ((memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address- 0x4000);
+        return memory.game_rom[true_address];
+    }
+    if (address >= 0xA000 && address <= 0xBFFF && memory.MBC_register.MBC1.ram_bank_on_bool) {
+        if (!memory.MBC_register.MBC1.is_bigger_then_512KB) {
+            return memory.MBC_register.MBC1.cart_RAM[memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits][address-0xA000];
+        }
+        return memory.MBC_register.MBC1.cart_RAM[0][address -0xA000];
+    }
+    return 0;
+}
+
 uint8_t read_MBC2(uint16_t endereco) {
     return memory.game_rom[(memory.MBC_curr_bank * 0x4000) + endereco - 0x4000];
 }
@@ -662,10 +695,33 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     // TODO(MEM): validar limites da ROM antes de indexar memory.game_rom.
     // if (address == 0xFF44 && cpu.PC == 0x2828) return 0x91;
     // if (address == 0xFF44) return 0x94;
-    if (address >= 0x0000 && 0x3FFF >= address) return memory.game_rom[address];
-    if (address >= 0x4000 && 0x7FFF >= address) return memory.game_rom[address];
+    if (address >= 0x0000 && 0x3FFF >= address) {
+        switch (memory.MBC_type) {
+            case 0x00: return memory.game_rom[address];
+            case 0x01: return MBC1_bus_read(address); break;//TODO: implementar tipo MBC com variaveis
+            case 0x02: break;
+            case 0x03: break;
+            case 0x05: break;
+        }
+    }
+    if (address >= 0x4000  && 0x7FFF >= address) {
+        switch (memory.MBC_type) {
+            case 0x00: return memory.game_rom[address];
+            case 0x01: return MBC1_bus_read(address); break;
+            case 0x02: break;
+            case 0x03: break;
+            case 0x05: break;
+        }
+    }
     if (address >= 0x8000 && 0x9FFF >= address) return memory.VRAM[address-0x8000];
-    if (address >= 0xA000 && 0xBFFF >= address) return memory.cartRAM[address - 0xA000];
+    if (address >= 0xA000 && 0xBFFF >= address)
+        switch (memory.MBC_type) {
+            case 0x00: return memory.cartRAM[address - 0xA000];
+            case 0x01: return MBC1_bus_read(address); break;//TODO: implementar tipo MBC com variaveis
+            case 0x02: break;
+            case 0x03: break;
+            case 0x05: break;
+        }
     if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
     if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
     if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
@@ -698,22 +754,38 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
     if (address >= 0x0000 && 0x3FFF >= address) {
         switch (memory.MBC_type) {
             //case 0x00: memory.game_rom[address] = variable;
-            case 0x01: MBC1_bus(address, variable); break;//TODO: implementar tipo MBC com variaveis
+            case 0x01: MBC1_bus_write(address, variable); break;//TODO: implementar tipo MBC com variaveis
             case 0x02: break;
             case 0x03: break;
             case 0x05: break;
         }
     }
-    if (address >= 0x4000  && 0x7FFF >= address) {
+    else if (address >= 0x4000  && 0x7FFF >= address) {
         switch (memory.MBC_type) {
             //case 0x00: memory.game_rom[address] = variable;
-            case 0x01: MBC1_bus(address, variable); break;
+            case 0x01: MBC1_bus_write(address, variable); break;
             case 0x02: break;
             case 0x03: break;
+            case 0x05: break;
         }
     }
-    if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
-    else if (address >= 0xA000 && 0xBFFF >= address) memory.cartRAM[address - 0xA000] = variable;
+    else if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
+    else if (address >= 0xA000 && 0xBFFF >= address) {
+        //printf("CART RAM WRITE: %04X = %02X\n", address, variable);
+        //printf("%02X %02X %02X %02X %02X\n",
+    // read_from_memory_8bit(0xA454),
+    // read_from_memory_8bit(0xA455),
+    // read_from_memory_8bit(0xA456),
+    // read_from_memory_8bit(0xA457),
+    // read_from_memory_8bit(0xA458));
+        switch (memory.MBC_type) {
+            case 0x00: memory.cartRAM[address - 0xA000] = variable; break;
+            case 0x01: MBC1_bus_write(address, variable); break;//TODO: implementar tipo MBC com variaveis
+            case 0x02: break;
+            case 0x03: break;
+            case 0x05: break;
+        }
+    }
     else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
     else if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
     else if (address >= 0xFF00 && 0xFF7F >= address) {
@@ -728,7 +800,7 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
         else if (address == 0xFF46) {
             memory.IO[0x46] = variable;
             cpu.DMA_transfer_pending = true;
-            cpu.DMA_transfer_curr_addr = extract_adress(variable, 0x00);
+            cpu.DMA_transfer_curr_addr = extract_address(variable, 0x00);
             //system("clear");
             //scan_OAM();
             //getchar();
@@ -752,7 +824,7 @@ void write_into_memory_8bit_DMA(uint16_t address, uint8_t variable) {
         if (address == 0xFF46) {
             memory.IO[address - 0xFF00] = variable;
             cpu.DMA_transfer_pending = true;
-            cpu.DMA_transfer_curr_addr = extract_adress(variable, 0x00);
+            cpu.DMA_transfer_curr_addr = extract_address(variable, 0x00);
             cpu.DMA_transfer_limit_addr = cpu.DMA_transfer_curr_addr + 160;
             cpu.DMA_transfer_OAM_addr = 0xFE00;
         }
@@ -760,6 +832,37 @@ void write_into_memory_8bit_DMA(uint16_t address, uint8_t variable) {
     }
     else if (address >= 0xFF80 && 0xFFFE >= address) memory.HRAM[address - 0xFF80] = variable;
     else if (address == 0xFFFF) memory.IE = variable;
+}
+
+void load_game_save_on_start() {
+    char buffer[4096];
+    switch (memory.MBC_type) {
+        case 1:
+            for (int i = 0; i<4; i++) {
+                snprintf(buffer, 4096, "%s.cartram%d", cpu.game_file, i);
+                FILE* cart_rom_file = fopen(buffer, "rb");
+                if (cart_rom_file == NULL) break;
+                for (int j = 0; j<2000;j++) {
+                    memory.MBC_register.MBC1.cart_RAM[i][j] = fgetc(cart_rom_file);
+                }
+                fclose(cart_rom_file);
+            }
+    }
+}
+
+void persist_save_game_on_exit() {
+    char buffer[4096];
+    switch (memory.MBC_type) {
+        case 1:
+            for (int i = 0; i<4; i++) {
+                snprintf(buffer, 4096, "%s.cartram%d", cpu.game_file, i);
+                FILE* cart_rom_file = fopen(buffer, "wb");
+                for (int j = 0; j<2000;j++) {
+                    fputc(memory.MBC_register.MBC1.cart_RAM[i][j],cart_rom_file);
+                }
+                fclose(cart_rom_file);
+            }
+    }
 }
 /*
 FF0F — IF: Interrupt flag
@@ -1004,11 +1107,12 @@ void set_C_flag_up(bool up_or_down) {
 
 //______________________________________
 
-void start_game(char* game_adress) {
+void start_game(char* game_address) {
     // TODO(ROM): validar fopen antes de usar getc/rewind/fread.
     // TODO(ROM): revisar o +1 no tamanho e conferir o retorno de fread/malloc.
     int game_rom_lenght = 0;
-    FILE *fl = fopen(game_adress, "rb");
+    cpu.game_file = strdup(game_address);
+    FILE *fl = fopen(game_address, "rb");
     int curr_variable = getc(fl);
     while (curr_variable != EOF) {
         game_rom_lenght++;
@@ -1018,8 +1122,31 @@ void start_game(char* game_adress) {
     rewind(fl);
     memory.game_rom = malloc(sizeof(uint8_t) * memory.game_rom_lenght);
     fread(memory.game_rom, sizeof(uint8_t), memory.game_rom_lenght-1, fl);
-    memory.MBC_curr_bank =1;
     memory.MBC_type = memory.game_rom[0x0147];
+    memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
+    //printf("0x%04x\n",memory.MBC_type);
+    if (memory.game_rom_lenght > 532*1024) {
+
+        switch (memory.MBC_type) {
+            case 1:
+            case 2:
+            case 3:
+                memory.MBC_type =1;
+                memory.MBC_register.MBC1.is_bigger_then_512KB = true;
+                memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
+        }
+    }
+    else {
+        switch (memory.MBC_type) {
+            case 1:
+            case 2:
+            case 3:
+                memory.MBC_type = 1;
+                memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
+                memory.MBC_register.MBC1.is_bigger_then_512KB = false;
+        }
+    }
+    load_game_save_on_start();
     fclose(fl);
 }
 
@@ -1068,11 +1195,11 @@ void update_comparator_CP_8bit_register(uint8_t target, uint8_t variable) {
 }
 //______________________________________
 uint16_t update_decrement_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte, uint8_t decrement) {
-    uint16_t target_hex = extract_adress(*upper_byte, *lower_byte);
+    uint16_t target_hex = extract_address(*upper_byte, *lower_byte);
     uint16_t result = (uint16_t)(((uint16_t)target_hex - decrement) % (0x10000));
     *upper_byte = (uint8_t)((result & 0xFF00) >> 8);
     *lower_byte = (uint8_t)((result & 0xFF));
-    return extract_adress(*upper_byte, *lower_byte);
+    return extract_address(*upper_byte, *lower_byte);
 }
 void update_increment_SP_e8(int8_t e8) {
     uint16_t old_sp = cpu.SP;
@@ -1084,7 +1211,7 @@ void update_increment_SP_e8(int8_t e8) {
 }
 uint8_t update_increment_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte, uint16_t increment, bool cond_inc, bool carry_cond) {
     // TODO(CPU): revisar carry_cond; o carry entra em temp_sum/flags, mas não entra no valor de result.
-    uint16_t target_hex = extract_adress(*upper_byte, *lower_byte);
+    uint16_t target_hex = extract_address(*upper_byte, *lower_byte);
     uint8_t carry = 0;
     if (carry_cond) {
         if (is_C_flag_up())
@@ -1104,7 +1231,7 @@ uint8_t update_increment_16bit_register(uint8_t *upper_byte, uint8_t *lower_byte
         set_C_flag_up(true);
     else if (!cond_inc)
         set_C_flag_up(false);
-    return extract_adress(*upper_byte, *lower_byte);
+    return extract_address(*upper_byte, *lower_byte);
 }
 uint8_t update_decrement_8bit_register(uint8_t *target, uint8_t decrement, bool cond_dec, bool carry_cond) {
     uint8_t old_value = *target;
@@ -1518,27 +1645,27 @@ uint8_t check_operand_row_collum_5_CB_PREFIX(uint8_t opcode) {
     }
 }
 uint8_t check_operand_row_collum_6_CB_PREFIX(uint8_t opcode) {
-    uint8_t temp = read_from_memory_8bit(extract_adress(cpu.H, cpu.L));
+    uint8_t temp = read_from_memory_8bit(extract_address(cpu.H, cpu.L));
     switch (get_opcode_row(opcode)) {
-        case 0x00: rotate_register(&temp, 'L', false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x10: rotate_register(&temp, 'L', true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x20: shift_register(&temp,'L',false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x30: swap_nibbles(&temp); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x00: rotate_register(&temp, 'L', false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x10: rotate_register(&temp, 'L', true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x20: shift_register(&temp,'L',false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x30: swap_nibbles(&temp); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
 
-        case 0x40: bit_opcode(&temp, 0); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x50: bit_opcode(&temp, 2); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x60: bit_opcode(&temp, 4); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x70: bit_opcode(&temp, 6); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x40: bit_opcode(&temp, 0); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x50: bit_opcode(&temp, 2); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x60: bit_opcode(&temp, 4); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x70: bit_opcode(&temp, 6); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
 
-        case 0x80: flip_bit_opcode(&temp, 0, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x90: flip_bit_opcode(&temp, 2, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xA0: flip_bit_opcode(&temp, 4, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xB0: flip_bit_opcode(&temp, 6, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x80: flip_bit_opcode(&temp, 0, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x90: flip_bit_opcode(&temp, 2, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xA0: flip_bit_opcode(&temp, 4, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xB0: flip_bit_opcode(&temp, 6, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
 
-        case 0xC0: flip_bit_opcode(&temp, 0, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xD0: flip_bit_opcode(&temp, 2, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xE0: flip_bit_opcode(&temp, 4, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xF0: flip_bit_opcode(&temp, 6, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xC0: flip_bit_opcode(&temp, 0, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xD0: flip_bit_opcode(&temp, 2, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xE0: flip_bit_opcode(&temp, 4, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xF0: flip_bit_opcode(&temp, 6, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
     }
 }
 uint8_t check_operand_row_collum_7_CB_PREFIX(uint8_t opcode) {
@@ -1703,28 +1830,28 @@ uint8_t check_operand_row_collum_D_CB_PREFIX(uint8_t opcode) {
     }
 }
 uint8_t check_operand_row_collum_E_CB_PREFIX(uint8_t opcode) {
-    uint8_t temp = read_from_memory_8bit(extract_adress(cpu.H, cpu.L));
-    write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp);
+    uint8_t temp = read_from_memory_8bit(extract_address(cpu.H, cpu.L));
+    write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp);
     switch (get_opcode_row(opcode)) {
-        case 0x00: rotate_register(&temp, 'R', false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x10: rotate_register(&temp, 'R', true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x20: shift_register(&temp,'R',false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x30: shift_register(&temp,'R',true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x00: rotate_register(&temp, 'R', false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x10: rotate_register(&temp, 'R', true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x20: shift_register(&temp,'R',false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x30: shift_register(&temp,'R',true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
 
-        case 0x40: bit_opcode(&temp, 1); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x50: bit_opcode(&temp, 3); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x60: bit_opcode(&temp, 5); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
-        case 0x70: bit_opcode(&temp, 7); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x40: bit_opcode(&temp, 1); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x50: bit_opcode(&temp, 3); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x60: bit_opcode(&temp, 5); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
+        case 0x70: bit_opcode(&temp, 7); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 12;
 
-        case 0x80: flip_bit_opcode(&temp, 1, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0x90: flip_bit_opcode(&temp, 3, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xA0: flip_bit_opcode(&temp, 5, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xB0: flip_bit_opcode(&temp, 7, false); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x80: flip_bit_opcode(&temp, 1, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0x90: flip_bit_opcode(&temp, 3, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xA0: flip_bit_opcode(&temp, 5, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xB0: flip_bit_opcode(&temp, 7, false); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
 
-        case 0xC0: flip_bit_opcode(&temp, 1, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xD0: flip_bit_opcode(&temp, 3, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xE0: flip_bit_opcode(&temp, 5, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
-        case 0xF0: flip_bit_opcode(&temp, 7, true); write_into_memory_8bit(extract_adress(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xC0: flip_bit_opcode(&temp, 1, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xD0: flip_bit_opcode(&temp, 3, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xE0: flip_bit_opcode(&temp, 5, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
+        case 0xF0: flip_bit_opcode(&temp, 7, true); write_into_memory_8bit(extract_address(cpu.H, cpu.L),temp); cpu.PC+=2; return 16;
     }
 }
 uint8_t check_operand_row_collum_F_CB_PREFIX(uint8_t opcode) {
@@ -1789,7 +1916,7 @@ uint8_t check_operand_row_collum_0(uint8_t opcode) {
         case 0x40: cpu.PC++; return 4;
         case 0x50: set_8bit_register('D',cpu.B); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.B); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.B); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.B); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.B, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.B, false, false); cpu.PC++; return 4;
@@ -1806,23 +1933,23 @@ uint8_t check_operand_row_collum_0(uint8_t opcode) {
                 return_to_call_address();
                 return 20;
             } cpu.PC++; return 8;
-        case 0xE0: write_into_memory_8bit(extract_adress(0xFF, read_from_memory_8bit(cpu.PC +1)), cpu.A); cpu.PC+=2; return 12;
+        case 0xE0: write_into_memory_8bit(extract_address(0xFF, read_from_memory_8bit(cpu.PC +1)), cpu.A); cpu.PC+=2; return 12;
         case 0xF0:
-            set_8bit_register('A',read_from_memory_8bit(extract_adress(0xFF, read_from_memory_8bit(cpu.PC +1)))); cpu.PC+=2; return 12;
+            set_8bit_register('A',read_from_memory_8bit(extract_address(0xFF, read_from_memory_8bit(cpu.PC +1)))); cpu.PC+=2; return 12;
         default:
     }
 }
 uint8_t check_operand_row_collum_1(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
-        case 0x00: set_16bit_register('B','C',extract_adress(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;
-        case 0x10: set_16bit_register('D','E',extract_adress(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;  // load HL, n16
-        case 0x20: set_16bit_register('H','L',extract_adress(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;  // load
-        case 0x30: cpu.SP = extract_adress(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1)); cpu.PC+=3; return 12;
+        case 0x00: set_16bit_register('B','C',extract_address(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;
+        case 0x10: set_16bit_register('D','E',extract_address(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;  // load HL, n16
+        case 0x20: set_16bit_register('H','L',extract_address(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1))); cpu.PC+=3; return 12;  // load
+        case 0x30: cpu.SP = extract_address(read_from_memory_8bit(cpu.PC +2),read_from_memory_8bit(cpu.PC +1)); cpu.PC+=3; return 12;
 
         case 0x40: set_8bit_register('B', cpu.C); cpu.PC++; return 4;
         case 0x50: set_8bit_register('D', cpu.C); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.C); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.C); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.C); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.C, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.C, false, false); cpu.PC++; return 4;
@@ -1838,19 +1965,19 @@ uint8_t check_operand_row_collum_1(uint8_t opcode) {
 }
 uint8_t check_operand_row_collum_2(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
-        case 0x00: write_into_memory_8bit(extract_adress(cpu.B,cpu.C), cpu.A); cpu.PC++; return 8;
-        case 0x10: write_into_memory_8bit(extract_adress(cpu.D,cpu.E), cpu.A); cpu.PC++; return 8;
+        case 0x00: write_into_memory_8bit(extract_address(cpu.B,cpu.C), cpu.A); cpu.PC++; return 8;
+        case 0x10: write_into_memory_8bit(extract_address(cpu.D,cpu.E), cpu.A); cpu.PC++; return 8;
         case 0x20:
-            write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.A);
+            write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.A);
             update_increment_16bit_register(&cpu.H, &cpu.L, 1, true, false); cpu.PC++; return 8;
         case 0x30:
-            write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.A);
+            write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.A);
             update_decrement_16bit_register(&cpu.H, &cpu.L, 1); cpu.PC++; return 8;
 
         case 0x40: set_8bit_register('B', cpu.D); cpu.PC++; return 4;
         case 0x50: cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.D); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H, cpu.L), cpu.D); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H, cpu.L), cpu.D); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.D, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.D, false, false); cpu.PC++; return 4;
@@ -1859,18 +1986,18 @@ uint8_t check_operand_row_collum_2(uint8_t opcode) {
 
         case 0xC0:
             if (!is_Z_flag_up()) {
-                jump_to_address(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)));
+                jump_to_address(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)));
                 return 16;
             } cpu.PC += 3; return 12;
 
         case 0xD0:
             if (!is_C_flag_up()) {
-                jump_to_address(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)));
+                jump_to_address(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)));
                 return 16;
             } cpu.PC += 3; return 12;
 
-        case 0xE0: write_into_memory_8bit(extract_adress(0xFF, cpu.C), cpu.A); cpu.PC++; return 8;
-        case 0xF0: set_8bit_register('A',read_from_memory_8bit(extract_adress(0xFF, cpu.C))); cpu.PC++; return 8;
+        case 0xE0: write_into_memory_8bit(extract_address(0xFF, cpu.C), cpu.A); cpu.PC++; return 8;
+        case 0xF0: set_8bit_register('A',read_from_memory_8bit(extract_address(0xFF, cpu.C))); cpu.PC++; return 8;
         default:
     }
 }
@@ -1884,14 +2011,14 @@ uint8_t check_operand_row_collum_3(uint8_t opcode) {
         case 0x40: set_8bit_register('B', cpu.E); cpu.PC++; return 4;
         case 0x50: set_8bit_register('D', cpu.E); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.E); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.E); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.E); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.E, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.E, false, false); cpu.PC++; return 4;
         case 0xA0: update_comparator_AND_8bit_register(&cpu.A, cpu.E); cpu.PC++; return 4;
         case 0xB0: update_comparator_OR_8bit_register(&cpu.A, cpu.E); cpu.PC++; return 4;
 
-        case 0xC0: jump_to_address(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1))); return 16;
+        case 0xC0: jump_to_address(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1))); return 16;
         case 0xD0: return 0;
         case 0xE0: return 0;
         case 0xF0: cpu.IME = false; cpu.PC++; return 4;
@@ -1905,15 +2032,15 @@ uint8_t check_operand_row_collum_4(uint8_t opcode) {
         case 0x10: update_increment_8bit_register(&cpu.D, 1,true,false); cpu.PC++; return 4;  // load HL, n16
         case 0x20: update_increment_8bit_register(&cpu.H, 1,true,false); cpu.PC++; return 4;  // load
         case 0x30:
-            temp_var = read_from_memory_8bit(extract_adress(cpu.H,cpu.L));
+            temp_var = read_from_memory_8bit(extract_address(cpu.H,cpu.L));
             update_increment_8bit_register(&temp_var, 1,true,false);
-            write_into_memory_8bit(extract_adress(cpu.H,cpu.L), temp_var);
+            write_into_memory_8bit(extract_address(cpu.H,cpu.L), temp_var);
             cpu.PC++; return 12;
 
         case 0x40: set_8bit_register('B', cpu.H); cpu.PC++; return 4;
         case 0x50: set_8bit_register('D', cpu.H); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.H); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.H); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.H); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.H, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.H, false, false); cpu.PC++; return 4;
@@ -1923,13 +2050,13 @@ uint8_t check_operand_row_collum_4(uint8_t opcode) {
         case 0xC0:
             if (!is_Z_flag_up()) {
                 cpu.PC+=3;
-                call_to_address(extract_adress(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
+                call_to_address(extract_address(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
                 return 24;
             } cpu.PC+=3; return 12;
         case 0xD0:
             if (!is_C_flag_up()) {
                 cpu.PC+=3;
-                call_to_address(extract_adress(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
+                call_to_address(extract_address(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
                 return 24;
             } cpu.PC+=3; return 12;
         case 0xE0: return 0;
@@ -1944,15 +2071,15 @@ uint8_t check_operand_row_collum_5(uint8_t opcode) {
         case 0x10: update_decrement_8bit_register(&cpu.D, 1, true, false); cpu.PC++; return 4;  // load HL, n16
         case 0x20: update_decrement_8bit_register(&cpu.H, 1, true, false); cpu.PC++; return 4;  // load
         case 0x30:
-            temp_var = read_from_memory_8bit(extract_adress(cpu.H,cpu.L));
+            temp_var = read_from_memory_8bit(extract_address(cpu.H,cpu.L));
             update_decrement_8bit_register(&temp_var, 1,true,false);
-            write_into_memory_8bit(extract_adress(cpu.H,cpu.L), temp_var);
+            write_into_memory_8bit(extract_address(cpu.H,cpu.L), temp_var);
             cpu.PC++; return 12;
 
         case 0x40: set_8bit_register('B', cpu.L); cpu.PC++; return 4;
         case 0x50: set_8bit_register('D', cpu.L); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.L); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.L); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.L); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.L, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.L, false, false); cpu.PC++; return 4;
@@ -1971,11 +2098,11 @@ uint8_t check_operand_row_collum_6(uint8_t opcode) {
         case 0x00: set_8bit_register('B', read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 8;
         case 0x10: set_8bit_register('D', read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 8;
         case 0x20: set_8bit_register('H', read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 8;
-        case 0x30: write_into_memory_8bit(extract_adress(cpu.H, cpu.L), read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 12;
+        case 0x30: write_into_memory_8bit(extract_address(cpu.H, cpu.L), read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 12;
 
-        case 0x40: set_8bit_register('B', read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 8;
-        case 0x50: set_8bit_register('D', read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 8;
-        case 0x60: set_8bit_register('H', read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 8;
+        case 0x40: set_8bit_register('B', read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 8;
+        case 0x50: set_8bit_register('D', read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 8;
+        case 0x60: set_8bit_register('H', read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 8;
         case 0x70:
             if (cpu.IME) {
                 cpu.is_halted = true; cpu.PC++; return 4;
@@ -1985,10 +2112,10 @@ uint8_t check_operand_row_collum_6(uint8_t opcode) {
             }
             cpu.only_waiting_for_interrupt_cond = true; cpu.PC++; return 4;
 
-        case 0x80: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L)), false, false); cpu.PC++; return 8;
-        case 0x90: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L)), false, false); cpu.PC++; return 8;
-        case 0xA0: update_comparator_AND_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 8;
-        case 0xB0: update_comparator_OR_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 8;
+        case 0x80: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L)), false, false); cpu.PC++; return 8;
+        case 0x90: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L)), false, false); cpu.PC++; return 8;
+        case 0xA0: update_comparator_AND_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 8;
+        case 0xB0: update_comparator_OR_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 8;
 
         case 0xC0: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(cpu.PC+1), false, false); cpu.PC+=2; return 8;
         case 0xD0: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(cpu.PC+1), false, false); cpu.PC+=2; return 4;
@@ -2055,7 +2182,7 @@ uint8_t check_operand_row_collum_7(uint8_t opcode) {
         case 0x40: set_8bit_register('B', cpu.A); cpu.PC++; return 4;
         case 0x50: set_8bit_register('D', cpu.A); cpu.PC++; return 4;
         case 0x60: set_8bit_register('H', cpu.A); cpu.PC++; return 4;
-        case 0x70: write_into_memory_8bit(extract_adress(cpu.H,cpu.L), cpu.A); cpu.PC++; return 8;
+        case 0x70: write_into_memory_8bit(extract_address(cpu.H,cpu.L), cpu.A); cpu.PC++; return 8;
 
         case 0x80: update_increment_8bit_register(&cpu.A, cpu.A, false, false); cpu.PC++; return 4;
         case 0x90: update_decrement_8bit_register(&cpu.A, cpu.A, false, false); cpu.PC++; return 4;
@@ -2073,8 +2200,8 @@ uint8_t check_operand_row_collum_8(uint8_t opcode) {
     uint16_t temp;
     switch (get_opcode_row(opcode)) {
         case 0x00:
-            write_into_memory_8bit(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)), cpu.SP & 0x00FF);
-            write_into_memory_8bit(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)) + 1, (uint8_t)((cpu.SP & 0xFF00) >> 8));
+            write_into_memory_8bit(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)), cpu.SP & 0x00FF);
+            write_into_memory_8bit(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)) + 1, (uint8_t)((cpu.SP & 0xFF00) >> 8));
             cpu.PC+=3;
             return 20;
         case 0x10:
@@ -2114,9 +2241,9 @@ uint8_t check_operand_row_collum_8(uint8_t opcode) {
 }
 uint8_t check_operand_row_collum_9(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
-        case 0x00: update_increment_16bit_register(&cpu.H,&cpu.L,extract_adress(cpu.B,cpu.C),false,false); cpu.PC++; return 8;
-        case 0x10: update_increment_16bit_register(&cpu.H,&cpu.L,extract_adress(cpu.D,cpu.E),false,false); cpu.PC++; return 8;
-        case 0x20: update_increment_16bit_register(&cpu.H,&cpu.L,extract_adress(cpu.H,cpu.L),false,false); cpu.PC++; return 8; // load
+        case 0x00: update_increment_16bit_register(&cpu.H,&cpu.L,extract_address(cpu.B,cpu.C),false,false); cpu.PC++; return 8;
+        case 0x10: update_increment_16bit_register(&cpu.H,&cpu.L,extract_address(cpu.D,cpu.E),false,false); cpu.PC++; return 8;
+        case 0x20: update_increment_16bit_register(&cpu.H,&cpu.L,extract_address(cpu.H,cpu.L),false,false); cpu.PC++; return 8; // load
         case 0x30: update_increment_16bit_register(&cpu.H,&cpu.L, cpu.SP,false,false); cpu.PC++; return 8;
 
         case 0x40: cpu.PC++; return 4;
@@ -2131,20 +2258,20 @@ uint8_t check_operand_row_collum_9(uint8_t opcode) {
 
         case 0xC0: return_to_call_address(); return 16;
         case 0xD0: return_to_call_address(); cpu.IME = true; return 16;
-        case 0xE0: jump_to_address(extract_adress(cpu.H, cpu.L)); return 4;
-        case 0xF0: cpu.SP = extract_adress(cpu.H, cpu.L); cpu.PC++; return 8;
+        case 0xE0: jump_to_address(extract_address(cpu.H, cpu.L)); return 4;
+        case 0xF0: cpu.SP = extract_address(cpu.H, cpu.L); cpu.PC++; return 8;
         default:
     }
 }
 uint8_t check_operand_row_collum_A(uint8_t opcode) {
     switch (get_opcode_row(opcode)) {
-        case 0x00: set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.B, cpu.C))); cpu.PC++; return 8;
-        case 0x10: set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.D, cpu.E))); cpu.PC++; return 8; // load HL, n16
+        case 0x00: set_8bit_register('A', read_from_memory_8bit(extract_address(cpu.B, cpu.C))); cpu.PC++; return 8;
+        case 0x10: set_8bit_register('A', read_from_memory_8bit(extract_address(cpu.D, cpu.E))); cpu.PC++; return 8; // load HL, n16
         case 0x20:
-            set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.H, cpu.L)));
+            set_8bit_register('A', read_from_memory_8bit(extract_address(cpu.H, cpu.L)));
             update_increment_16bit_register(&cpu.H, &cpu.L, 1, true, false); cpu.PC++; return 8;
         case 0x30:
-            set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.H, cpu.L)));
+            set_8bit_register('A', read_from_memory_8bit(extract_address(cpu.H, cpu.L)));
             update_decrement_16bit_register(&cpu.H, &cpu.L, 1); cpu.PC++; return 8;
 
         case 0x40: set_8bit_register('C', cpu.D); cpu.PC++; return 4;
@@ -2159,18 +2286,18 @@ uint8_t check_operand_row_collum_A(uint8_t opcode) {
 
         case 0xC0:
             if (is_Z_flag_up()) {
-                jump_to_address(extract_adress(read_from_memory_8bit(cpu.PC+2), read_from_memory_8bit(cpu.PC+1)));
+                jump_to_address(extract_address(read_from_memory_8bit(cpu.PC+2), read_from_memory_8bit(cpu.PC+1)));
                 return 16;
             }
             cpu.PC+=3; return 12;
         case 0xD0:
             if (is_C_flag_up()) {
-                jump_to_address(extract_adress(read_from_memory_8bit(cpu.PC+2), read_from_memory_8bit(cpu.PC+1)));
+                jump_to_address(extract_address(read_from_memory_8bit(cpu.PC+2), read_from_memory_8bit(cpu.PC+1)));
                 return 16;
             }
             cpu.PC+=3; return 12;
-        case 0xE0: write_into_memory_8bit(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)),cpu.A); cpu.PC+=3; return 16;
-        case 0xF0: set_8bit_register('A', read_from_memory_8bit(extract_adress(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)))); cpu.PC+=3; return 16;
+        case 0xE0: write_into_memory_8bit(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)),cpu.A); cpu.PC+=3; return 16;
+        case 0xF0: set_8bit_register('A', read_from_memory_8bit(extract_address(read_from_memory_8bit(cpu.PC+2),read_from_memory_8bit(cpu.PC+1)))); cpu.PC+=3; return 16;
         default:
     }
 }
@@ -2218,13 +2345,13 @@ uint8_t check_operand_row_collum_C(uint8_t opcode) {
         case 0xC0:
             if (is_Z_flag_up()) {
                 cpu.PC+=3;
-                call_to_address(extract_adress(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
+                call_to_address(extract_address(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
                 return 24;
             } cpu.PC+=3; return 12;
         case 0xD0:
             if (is_C_flag_up()) {
                 cpu.PC+=3;
-                call_to_address(extract_adress(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
+                call_to_address(extract_address(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2)));
                 return 24;
             } cpu.PC+=3; return 12;
         case 0xE0: return 0;
@@ -2248,7 +2375,7 @@ uint8_t check_operand_row_collum_D(uint8_t opcode) {
         case 0xA0: update_comparator_XOR_8bit_register(&cpu.A, cpu.L); cpu.PC++; return 4;
         case 0xB0: update_comparator_CP_8bit_register(cpu.A, cpu.L); cpu.PC++; return 4;
 
-        case 0xC0: cpu.PC+=3; call_to_address(extract_adress(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2))); return 24;
+        case 0xC0: cpu.PC+=3; call_to_address(extract_address(read_from_memory_8bit(cpu.PC-1),read_from_memory_8bit(cpu.PC-2))); return 24;
         case 0xD0: exit(1);
         case 0xE0: exit(1);
         case 0xF0: exit(1);
@@ -2261,15 +2388,15 @@ uint8_t check_operand_row_collum_E(uint8_t opcode) {
         case 0x20: set_8bit_register('L', read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 8; // load
         case 0x30: set_8bit_register('A', read_from_memory_8bit(cpu.PC+1)); cpu.PC+=2; return 8;
 
-        case 0x40: set_8bit_register('C', read_from_memory_8bit(extract_adress(cpu.H,cpu.L))); cpu.PC++; return 8;
-        case 0x50: set_8bit_register('E', read_from_memory_8bit(extract_adress(cpu.H,cpu.L))); cpu.PC++; return 8;
-        case 0x60: set_8bit_register('L', read_from_memory_8bit(extract_adress(cpu.H,cpu.L))); cpu.PC++; return 8;
-        case 0x70: set_8bit_register('A', read_from_memory_8bit(extract_adress(cpu.H,cpu.L))); cpu.PC++; return 8;
+        case 0x40: set_8bit_register('C', read_from_memory_8bit(extract_address(cpu.H,cpu.L))); cpu.PC++; return 8;
+        case 0x50: set_8bit_register('E', read_from_memory_8bit(extract_address(cpu.H,cpu.L))); cpu.PC++; return 8;
+        case 0x60: set_8bit_register('L', read_from_memory_8bit(extract_address(cpu.H,cpu.L))); cpu.PC++; return 8;
+        case 0x70: set_8bit_register('A', read_from_memory_8bit(extract_address(cpu.H,cpu.L))); cpu.PC++; return 8;
 
-        case 0x80: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L)), false, true); cpu.PC++; return 4;
-        case 0x90: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L)), false, true); cpu.PC++; return 4;
-        case 0xA0: update_comparator_XOR_8bit_register(&cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 4;
-        case 0xB0: update_comparator_CP_8bit_register(cpu.A, read_from_memory_8bit(extract_adress(cpu.H, cpu.L))); cpu.PC++; return 4;
+        case 0x80: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L)), false, true); cpu.PC++; return 4;
+        case 0x90: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L)), false, true); cpu.PC++; return 4;
+        case 0xA0: update_comparator_XOR_8bit_register(&cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 4;
+        case 0xB0: update_comparator_CP_8bit_register(cpu.A, read_from_memory_8bit(extract_address(cpu.H, cpu.L))); cpu.PC++; return 4;
 
         case 0xC0: update_increment_8bit_register(&cpu.A, read_from_memory_8bit(cpu.PC+1), false, true); cpu.PC+=2; return 8;
         case 0xD0: update_decrement_8bit_register(&cpu.A, read_from_memory_8bit(cpu.PC+1), false, true); cpu.PC+=2; return 8;
@@ -2870,7 +2997,7 @@ int main(int argc, char*argv[]) {
     // if (screen2 == NULL) {
     //     SDL_DestroyWindow(screen2);
     // }
-    SDL_CreateWindowAndRenderer(160, 144, SDL_WINDOW_SHOWN, &screen, &renderer);
+    SDL_CreateWindowAndRenderer(160, 344, SDL_WINDOW_SHOWN, &screen, &renderer);
     if (screen == NULL) {
         SDL_DestroyWindow(screen);
     }
@@ -2948,6 +3075,7 @@ int main(int argc, char*argv[]) {
         while (1) {
             if (vblank_start_joypad) {
                 vblank_start_joypad = false;
+                //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_KEYUP) {
@@ -2965,7 +3093,7 @@ int main(int argc, char*argv[]) {
                             case SDLK_a:
                                 on_A_button = false; break;
                                 // botão A
-                            case SDLK_b:
+                            case SDLK_s:
                                 on_B_button = false; break;
                                 // botão B
                             case SDLK_z:
@@ -2992,7 +3120,7 @@ int main(int argc, char*argv[]) {
                             case SDLK_a:
                                 on_A_button = true; break;
                                 // botão A
-                            case SDLK_b:
+                            case SDLK_s:
                                 on_B_button = true; break;
                                 // botão B
                             case SDLK_z:
@@ -3001,6 +3129,13 @@ int main(int argc, char*argv[]) {
                             case SDLK_x:
                                 on_start_button = true; break;
                                 //botão start
+                            case SDLK_ESCAPE:
+                                persist_save_game_on_exit();
+                                free(memory.game_rom);
+                                //free(cpu.game_file);
+                                SDL_DestroyWindow(screen);
+                                SDL_Quit();
+                                exit(0);
                         }
                     }
                 }
