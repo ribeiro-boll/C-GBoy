@@ -147,7 +147,9 @@ typedef struct GB_PPU {
 
 double emulation_delay_target = 16.74;
 double emulation_delay_left = 0;
-
+int contador_emulation_delay_save = 0;
+int contador_quit_game = 0;
+bool first_run_auto_save = true;
 bool vblank_start_joypad = true;
 
 bool cond_start_vblank = false;
@@ -2854,11 +2856,30 @@ void ppu_cycles_Verify() {
         ppu.executou_modo_3 = false;
         //vblank_start_joypad = false;
         ppu.executou_ly_lyc = false;
+
         if (get_curr_LY() == 153) {
-            cpu.frame_end = SDL_GetPerformanceCounter();
-            cpu.time_elapsed = ((double)(cpu.frame_end - cpu.frame_start) * 1000.0)/(SDL_GetPerformanceFrequency()*1.0);
+            contador_emulation_delay_save++;
             emulation_delay_left = emulation_delay_target - cpu.time_elapsed;
             if (emulation_delay_left > 0 && emulation_delay_left < emulation_delay_target) SDL_Delay(emulation_delay_left);
+            if (first_run_auto_save) {
+                if (contador_emulation_delay_save > 1200) {
+                    printf("Auto save from cartram first run!!!...\n");
+                    persist_save_game_on_exit();
+                    contador_emulation_delay_save = 0;
+                    first_run_auto_save = false;
+                }
+            }
+            else {
+                if (contador_emulation_delay_save > 120) {
+                    contador_quit_game = 0;
+                    printf("Auto save from cartram...\n");
+                    persist_save_game_on_exit();
+                    contador_emulation_delay_save = 0;
+                }
+            }
+            cpu.frame_end = SDL_GetPerformanceCounter();
+            cpu.time_elapsed = ((double)(cpu.frame_end - cpu.frame_start) * 1000.0)/(SDL_GetPerformanceFrequency()*1.0);
+
             ppu.current_LY_from_window = 0;
             ppu.executou_modo_1 = false;
 
@@ -2949,7 +2970,7 @@ int main(int argc, char*argv[]) {
     // if (screen2 == NULL) {
     //     SDL_DestroyWindow(screen2);
     // }
-    SDL_CreateWindowAndRenderer(160, 144, SDL_WINDOW_SHOWN, &screen, &renderer);
+    SDL_CreateWindowAndRenderer(160, 244, SDL_WINDOW_SHOWN, &screen, &renderer);
     if (screen == NULL) {
         SDL_DestroyWindow(screen);
     }
@@ -3025,8 +3046,23 @@ int main(int argc, char*argv[]) {
         SDL_Event event;
         write_into_memory_8bit(0xFF00, 0b00101111);
         while (1) {
+            if (cpu.PC == 0x5E3C) {
+                printf("PORRA O ZELDA ACEITOU O START\n");
+            }
+            if (cpu.PC == 0x5E0C) {
+                printf(
+                    "MENU CHECK: FFCC=%02X C11C=%02X C19F=%02X C124=%02X C14F=%02X DB9A=%02X\n",
+                    read_from_memory_8bit(0xFFCC),
+                    read_from_memory_8bit(0xC11C),
+                    read_from_memory_8bit(0xC19F),
+                    read_from_memory_8bit(0xC124),
+                    read_from_memory_8bit(0xC14F),
+                    read_from_memory_8bit(0xDB9A)
+                );
+            }
             if (vblank_start_joypad) {
                 vblank_start_joypad = false;
+
                 //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
@@ -3082,18 +3118,25 @@ int main(int argc, char*argv[]) {
                                 on_start_button = true; break;
                                 //botão start
                             case SDLK_ESCAPE:
-                                persist_save_game_on_exit();
-                                free(memory.game_rom);
-                                //free(cpu.game_file);
-                                SDL_DestroyWindow(screen);
-                                SDL_Quit();
-                                exit(0);
+                                contador_quit_game++;
+                                if (contador_quit_game>=2) {
+                                    persist_save_game_on_exit();
+                                    free(memory.game_rom);
+                                    //free(cpu.game_file);
+                                    SDL_DestroyWindow(screen);
+                                    SDL_Quit();
+                                    exit(0);
+                                }
                                 break;
                             case SDLK_BACKSPACE:
-                                free(memory.game_rom);
-                                SDL_DestroyWindow(screen);
-                                SDL_Quit();
-                                exit(0);
+                                contador_quit_game++;
+                                if (contador_quit_game>=2) {
+                                    free(memory.game_rom);
+                                    //free(cpu.game_file);
+                                    SDL_DestroyWindow(screen);
+                                    SDL_Quit();
+                                    exit(0);
+                                }
                                 break;
                         }
                     }
