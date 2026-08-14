@@ -671,7 +671,7 @@ void MBC1_bus_write(uint16_t address, uint8_t value) {
 uint8_t MBC1_bus_read(uint16_t address) {
     uint8_t valor_processado;
     if (address < 0x3FFF) {
-        return (memory.MBC_register.MBC1.banking_1_on) ? memory.game_rom[(memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits <<16) | address] : memory.game_rom[address];
+        return (memory.MBC_register.MBC1.banking_1_on && memory.MBC_register.MBC1.is_bigger_then_512KB) ? memory.game_rom[((uint32_t)(memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits << 5) * 0x4000) + address] : memory.game_rom[address];
     }
     if (address >= 0x4000 && address <= 0x7FFF) {
         if (!memory.MBC_register.MBC1.is_bigger_then_512KB) {
@@ -1148,7 +1148,7 @@ void start_game(char* game_address) {
     memory.MBC_type = memory.game_rom[0x0147];
     memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
     printf("0x%04x\n",memory.MBC_type);
-    if (memory.game_rom_lenght > 532*1024) {
+    if (memory.game_rom_lenght > 524288) {
 
         switch (memory.MBC_type) {
             case 1:
