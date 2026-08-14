@@ -25,12 +25,12 @@ jobs:
 
       - name: Compile
         run: |
-          gcc main.c -o gameboy.exe $(sdl2-config --cflags --libs)
+          gcc main.c -o C-GBoy.exe $(sdl2-config --cflags --libs)
 
       - name: Prepare
         run: |
           mkdir build
-          cp gameboy.exe build/
+          cp C-GBoy.exe build/
           cp /ucrt64/bin/SDL2.dll build/
 
       - name: Upload Windows build
