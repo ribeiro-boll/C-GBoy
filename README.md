@@ -53,6 +53,9 @@ Os bits de entrada seguem a lógica ativa em nível baixo utilizada pelo Game Bo
 
 ---
 
+## Windows Download & Installation
+[link](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip)
+
 ## Visão geral
 
 O C-GBoy tenta reproduzir o funcionamento do Game Boy em um nível relativamente baixo, em vez de apenas simular o resultado final das instruções.
