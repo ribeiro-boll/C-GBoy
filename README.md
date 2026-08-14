@@ -6,7 +6,7 @@ Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma lon
 
 O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 até o momento)**.
 
-Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque a ideia deste projeto foi aprender como portatil funciona, desse modo, utilizando apenas para:  
+Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque a ideia deste projeto foi aprender como portatil funciona, desse modo, utilizando apenas para:
 * auxílio na interpretação de documentação.
 * correção de erros que me impediam de prosseguir no projeto por mais de 3 dias. (no geral, foram apenas bugs, nada de implementação)
 * o desenvolvimento deste README.md.
@@ -14,6 +14,54 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
 > **Estado do projeto:** em desenvolvimento.
 >
 > O emulador já é capaz de executar alguns jogos comerciais, mas ainda não possui precisão ciclo-a-ciclo e existem comportamentos do hardware original que precisam ser implementados ou revisados.
+
+---
+
+# Índice
+
+- [Controles](#controles)
+    - [Demonstrações](#demonstrações)
+    - [Visão geral](#visão-geral)
+- [Funcionalidades atuais](#funcionalidades-atuais)
+- [Download e instalação para sistemas Windows](#download-e-instalação-para-sistemas-windows)
+- [Requisitos Linux](#requisitos-linux)
+- [Compilação](#compilação)
+- [Execução](#execução)
+- [Arquitetura da CPU](#arquitetura-da-cpu)
+    - [Decodificação de opcodes](#decodificação-de-opcodes)
+- [Stack](#stack)
+- [Mapa de memória](#mapa-de-memória)
+- [Cartridge / MBC](#cartridge--mbc)
+    - [ROM Only](#rom-only)
+    - [MBC1](#mbc1)
+- [Save RAM](#save-ram)
+- [Interrupções](#interrupções)
+- [HALT](#halt)
+- [Timers](#timers)
+- [DMA / OAM](#dma--oam)
+- [PPU](#ppu)
+    - [Modos da PPU](#modos-da-ppu)
+- [Background](#background)
+- [Window](#window)
+- [Sprites](#sprites)
+- [Paleta DMG](#paleta-dmg)
+- [SDL2](#sdl2)
+- [Sincronização](#sincronização)
+- [Debug e testes internos](#debug-e-testes-internos)
+- [Estado inicial](#estado-inicial)
+- [Estrutura atual do projeto](#estrutura-atual-do-projeto)
+- [Limitações conhecidas](#limitações-conhecidas)
+- [Roadmap técnico](#roadmap-técnico)
+    - [1. CPU](#1-cpu)
+    - [2. Memory Bus](#2-memory-bus)
+    - [3. Timers](#3-timers)
+    - [4. PPU](#4-ppu)
+    - [5. Cartridge](#5-cartridge)
+    - [6. Infraestrutura](#6-infraestrutura)
+    - [7. APU](#7-apu)
+- [Objetivo do projeto](#objetivo-do-projeto)
+- [Aviso sobre ROMs](#aviso-sobre-roms)
+    - [Status](#status)
 
 ---
 # Controles
@@ -133,7 +181,28 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 
 ---
 
-# Requisitos
+# Download e instalação para sistemas Windows
+
+1. Faça o download baixando o ultimo lançamento/release do github ou utilizando o link ao lado: [último lançamento](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip)
+
+2. Extraia em uma pasta (está pasta será o local de armazenamento das ROMs e dos Saves).
+
+3. Crie um atalho do emulador, vá nas propriedades do atalho e no campo chamado: "Destino", digite o nome da ROM que será emulada, assim como a imagem abaixo:
+
+ <img width="343" height="58" alt="image" src="https://github.com/user-attachments/assets/068ec355-e314-448e-8009-a531c74a3793" />
+
+> [!WARNING]
+>   1. **Não utilize espaços ou caracteres especiais no nome da ROM**.
+>   2. **Caso queira usar uma pasta dentro do diretorio do emulador para armazenar as ROMS, siga a mesma regra acima para nomes, dito isto, digite da seguinte forma "nome_da_pasta/ROM_selecionada.gb"**.
+
+
+4. Para rodar o C-GBoy e iniciar a emulação da ROM, apenas execute o atalho.
+
+5. Não esqueça de der uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador, apenas é possivel via o controle oficial.
+
+---
+
+# Requisitos Linux
 
 Para compilar o projeto são necessários:
 
@@ -141,6 +210,8 @@ Para compilar o projeto são necessários:
 * SDL2;
 * `pkg-config`;
 * sistema operacional com suporte à SDL2.
+
+---
 
 ### Debian / Ubuntu
 
