@@ -1148,7 +1148,7 @@ void start_game(char* game_address) {
     memory.MBC_type = memory.game_rom[0x0147];
     memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
     printf("0x%04x\n",memory.MBC_type);
-    if (memory.game_rom_lenght > 524288) {
+    if (memory.game_rom_lenght > 534*1024) {
 
         switch (memory.MBC_type) {
             case 1:
@@ -2542,16 +2542,19 @@ void clear_registers() {
     write_into_memory_8bit(0xFF40, 0x91);
 }
 void SDL_SetColor0(SDL_Renderer *renderer) {
-    SDL_SetRenderDrawColor(renderer, 155, 188, 15, 255); // #9BBC0F
+    SDL_SetRenderDrawColor(renderer, 198, 224, 150, 255); // #C6E096
 }
+
 void SDL_SetColor1(SDL_Renderer *renderer) {
-    SDL_SetRenderDrawColor(renderer, 139, 172, 15, 255); // #8BAC0F
+    SDL_SetRenderDrawColor(renderer, 158, 196, 108, 255); // #9EC46C
 }
+
 void SDL_SetColor2(SDL_Renderer *renderer) {
-    SDL_SetRenderDrawColor(renderer, 48, 98, 48, 255); // #306230
+    SDL_SetRenderDrawColor(renderer, 90, 136, 70, 255); // #5A8846
 }
+
 void SDL_SetColor3(SDL_Renderer *renderer) {
-    SDL_SetRenderDrawColor(renderer, 15, 56, 15, 255); // #0F380F
+    SDL_SetRenderDrawColor(renderer, 42, 78, 40, 255); // #2A4E28
 }
 void render_to_lcd() {
     for (int i =0; i<144;i++) {
@@ -2952,6 +2955,7 @@ void ppu_cycles_Verify() {
          */
         if (!ppu.executou_modo_1) {
             set_ppu_mode(1);
+            SDL_SetColor0(renderer);
             SDL_RenderClear(renderer);
             render_to_lcd();
             SDL_RenderPresent(renderer);
