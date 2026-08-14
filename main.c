@@ -2544,15 +2544,12 @@ void clear_registers() {
 void SDL_SetColor0(SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 198, 224, 150, 255); // #C6E096
 }
-
 void SDL_SetColor1(SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 158, 196, 108, 255); // #9EC46C
 }
-
 void SDL_SetColor2(SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 90, 136, 70, 255); // #5A8846
 }
-
 void SDL_SetColor3(SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 42, 78, 40, 255); // #2A4E28
 }
