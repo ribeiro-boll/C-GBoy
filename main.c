@@ -674,7 +674,15 @@ uint8_t MBC1_bus_read(uint16_t address) {
         return (memory.MBC_register.MBC1.banking_1_on) ? memory.game_rom[(memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits <<16) | address] : memory.game_rom[address];
     }
     if (address >= 0x4000 && address <= 0x7FFF) {
-        uint32_t true_address = (memory.MBC_register.MBC1.banking_1_on) ? (((memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits<<5) | memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address - 0x4000) : ((memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address- 0x4000);
+        if (!memory.MBC_register.MBC1.is_bigger_then_512KB) {
+            uint16_t rom_bank = ((memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits<<5) | memory.MBC_register.MBC1.ROM_bank_low_bits)%32;
+            if (rom_bank ==0) rom_bank =1;
+            uint32_t true_address = (memory.MBC_register.MBC1.banking_1_on) ? ((rom_bank * 0x4000) + (address - 0x4000)) : ((memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address- 0x4000);
+            return memory.game_rom[true_address];
+        }
+        uint16_t rom_bank = ((memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits<<5) | memory.MBC_register.MBC1.ROM_bank_low_bits);
+        if (rom_bank ==0) rom_bank =1;
+        uint32_t true_address = (memory.MBC_register.MBC1.banking_1_on) ? ((rom_bank * 0x4000) + (address - 0x4000)) : ((memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address- 0x4000);
         return memory.game_rom[true_address];
     }
     if (address >= 0xA000 && address <= 0xBFFF && memory.MBC_register.MBC1.ram_bank_on_bool) {
@@ -729,20 +737,32 @@ uint8_t read_from_memory_8bit(uint16_t address) {
     if (address >= 0xFE00 && 0xFE9F >= address) return memory.OAM[address - 0xFE00];
     if (address == 0xFF00) {
         uint8_t joypad = memory.IO[0];
-        if (joypad & 0b00100000) {
-            uint8_t dummy = joypad & 0b11111111;
+        if ((joypad & 0b00110000) == 0b00100000) {
+            uint8_t dummy = joypad | 0b11001111;
             dummy = (on_down_button)?   dummy & 0b11110111 : dummy | 0b00001000;
             dummy = (on_up_button)?     dummy & 0b11111011 : dummy | 0b00000100;
             dummy = (on_left_button)?   dummy & 0b11111101 : dummy | 0b00000010;
             dummy = (on_right_button)?  dummy & 0b11111110 : dummy | 0b00000001;
             return dummy;
         }
-        if (joypad & 0b00010000) {
-            uint8_t dummy = joypad & 0b11111111;
+        if ((joypad & 0b00110000) == 0b00010000) {
+            uint8_t dummy = joypad | 0b11001111;
             dummy = (on_start_button)?  dummy & 0b11110111 : dummy | 0b00001000;
             dummy = (on_select_button)? dummy & 0b11111011 : dummy | 0b00000100;
             dummy = (on_B_button)?      dummy & 0b11111101 : dummy | 0b00000010;
             dummy = (on_A_button)?      dummy & 0b11111110 : dummy | 0b00000001;
+            return dummy;
+        }
+        if ((joypad & 0b00110000) == 0b00110000) {
+            uint8_t dummy = joypad | 0b11001111;
+            return dummy;
+        }
+        if ((joypad & 0b00110000) == 0) {
+            uint8_t dummy = joypad | 0b11001111;
+            dummy = ((on_down_button)  | (on_start_button))?   dummy & 0b11110111 : dummy | 0b00001000;
+            dummy = ((on_up_button)    | (on_select_button)) ?   dummy & 0b11111011 : dummy | 0b00000100;
+            dummy = ((on_left_button)  | (on_B_button))?       dummy & 0b11111101 : dummy | 0b00000010;
+            dummy = ((on_right_button) | (on_A_button))?      dummy & 0b11111110 : dummy | 0b00000001;
             return dummy;
         }
     }
@@ -791,7 +811,8 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
     else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
     else if (address >= 0xFE00 && 0xFE9F >= address) memory.OAM[address - 0xFE00] = variable;
     else if (address >= 0xFF00 && 0xFF7F >= address) {
-        if (address == 0xFF02) {
+        if (address == 0xFF00) memory.IO[address - 0xFF00] = (variable & 0b00110000);
+        else if (address == 0xFF02) {
             if (read_from_memory_8bit(0xFF02) & 0x80) {
                 memory.IO[address - 0xFF01] =  0xFF;
                 memory.IO[address - 0xFF00] = variable & 0x7F;
@@ -3044,7 +3065,7 @@ int main(int argc, char*argv[]) {
         static uint8_t old_state = 0xFF;
         static uint8_t old_timer = 0xFF;
         SDL_Event event;
-        write_into_memory_8bit(0xFF00, 0b00101111);
+        //write_into_memory_8bit(0xFF00, 0b00101111);
         while (1) {
             if (vblank_start_joypad) {
                 vblank_start_joypad = false;
@@ -3064,6 +3085,7 @@ int main(int argc, char*argv[]) {
                                 on_up_button = false; break;
                             case SDLK_DOWN:
                                 on_down_button = false; break;
+
                             case SDLK_a:
                                 on_A_button = false; break;
                                 // botão A
