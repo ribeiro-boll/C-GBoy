@@ -3046,20 +3046,6 @@ int main(int argc, char*argv[]) {
         SDL_Event event;
         write_into_memory_8bit(0xFF00, 0b00101111);
         while (1) {
-            if (cpu.PC == 0x5E3C) {
-                printf("PORRA O ZELDA ACEITOU O START\n");
-            }
-            if (cpu.PC == 0x5E0C) {
-                printf(
-                    "MENU CHECK: FFCC=%02X C11C=%02X C19F=%02X C124=%02X C14F=%02X DB9A=%02X\n",
-                    read_from_memory_8bit(0xFFCC),
-                    read_from_memory_8bit(0xC11C),
-                    read_from_memory_8bit(0xC19F),
-                    read_from_memory_8bit(0xC124),
-                    read_from_memory_8bit(0xC14F),
-                    read_from_memory_8bit(0xDB9A)
-                );
-            }
             if (vblank_start_joypad) {
                 vblank_start_joypad = false;
 
