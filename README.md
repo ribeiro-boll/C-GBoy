@@ -1,6 +1,6 @@
 # C-GBoy
 
-<img width="160" height="244" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
+<img width="320" height="488" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
 
 Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
 
@@ -76,7 +76,7 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 
 # Demonstrações
 ### The Legend of Zelda: Link's Awakening
-<img width="160" height="244" alt="ezgif-5759ad37891f8ba8" src="https://github.com/user-attachments/assets/9e4792e9-58fa-412c-9235-ef68b63c552d" />
+<img width="320" height="488" alt="ezgif-5759ad37891f8ba8" src="https://github.com/user-attachments/assets/9e4792e9-58fa-412c-9235-ef68b63c552d" />
 
 
 ### Tetris
