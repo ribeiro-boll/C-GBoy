@@ -42,8 +42,6 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 - [Stack](#stack)
 - [Mapa de memória](#mapa-de-memória)
 - [Cartridge / MBC](#cartridge--mbc)
-    - [ROM Only](#rom-only)
-    - [MBC1](#mbc1)
 - [Save RAM](#save-ram)
 - [Interrupções](#interrupções)
 - [HALT](#halt)
