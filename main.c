@@ -3186,13 +3186,6 @@ int main(int argc, char*argv[]) {
                         }
                     }
                     if (event.type == SDL_KEYDOWN) {
-                        if (SDL_QUIT) {
-                            free(memory.game_rom);
-                            //free(cpu.game_file);
-                            SDL_DestroyWindow(screen);
-                            SDL_Quit();
-                            exit(0);
-                        }
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
                                 on_left_button = true; break;
