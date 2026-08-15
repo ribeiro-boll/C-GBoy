@@ -74,7 +74,7 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 
 # Demonstrações
 ### The Legend of Zelda: Link's Awakening
-<img width="320" height="488" alt="ezgif-5759ad37891f8ba8" src="https://github.com/user-attachments/assets/9e4792e9-58fa-412c-9235-ef68b63c552d" />
+<img width="160" height="244" alt="ezgif-5759ad37891f8ba8" src="https://github.com/user-attachments/assets/9e4792e9-58fa-412c-9235-ef68b63c552d" />
 
 
 ### Tetris
