@@ -69,6 +69,7 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
     - [7. APU](#7-apu)
 - [Objetivo do projeto](#objetivo-do-projeto)
     - [Status](#status)
+-[Agradecimentos](#agradecimentos) 
 
 ---
 
