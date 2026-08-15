@@ -4,7 +4,7 @@
 
 Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
 
-Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificl seria fazer isso?", e agora, aqui estamos.
+Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificil seria fazer isso?", e agora, aqui estamos.
 
 O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 até o momento)**.
 
