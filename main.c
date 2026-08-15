@@ -1238,10 +1238,10 @@ void start_game(char* game_address) {
 08 = 8 MiB   = 512 bancos
             */
             uint16_t max_banks = 2;
-            for (int i = 0;i<memory.game_rom[0x148]; i++) max_banks*=2;
+            for (int i = 0;i<memory.game_rom[0x148]; i++) {max_banks*=2;}
             memory.MBC_register.MBC5.rom_banks_avaliable = max_banks;
             memory.MBC_type = 5;
-            memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
+            memory.MBC_register.MBC5.ROM_bank_low_bits = 1;
             break;
     }
     /*
