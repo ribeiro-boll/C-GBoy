@@ -1,6 +1,6 @@
 # C-GBoy
 
-<img width="160" height="244" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
+<img width="320" height="488" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
 
 Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
 
@@ -42,8 +42,6 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 - [Stack](#stack)
 - [Mapa de memória](#mapa-de-memória)
 - [Cartridge / MBC](#cartridge--mbc)
-    - [ROM Only](#rom-only)
-    - [MBC1](#mbc1)
 - [Save RAM](#save-ram)
 - [Interrupções](#interrupções)
 - [HALT](#halt)
@@ -71,6 +69,7 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
     - [7. APU](#7-apu)
 - [Objetivo do projeto](#objetivo-do-projeto)
     - [Status](#status)
+- [Agradecimentos](#agradecimentos) 
 
 ---
 
@@ -1153,3 +1152,11 @@ O projeto ainda **não deve ser considerado um emulador Game Boy COMPLETO ou cyc
 A implementação atual já possui uma base significativa de CPU, memória, MBC1, PPU, sprites, DMA, timers e interrupções, mas ainda existem diferenças de comportamento e timing que podem afetar a compatibilidade com determinados softwares.
 
 Contribuições, testes e estudos sobre o hardware DMG são bem-vindos.
+
+# Agradecimentos
+Os sites abaixo foram usados como referencia ao decorrer deste projeto:
+* gbdev pandocs: https://gbdev.io/pandocs/
+* Gameboy Assembly Instruction Set: https://rgbds.gbdev.io/docs/v0.9.3/gbz80.7
+* Gameboy Assembly|Machine code reference: https://gbdev.io/gb-opcodes/optables/
+
+
