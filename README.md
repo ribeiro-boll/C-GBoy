@@ -1151,3 +1151,11 @@ O projeto ainda **não deve ser considerado um emulador Game Boy COMPLETO ou cyc
 A implementação atual já possui uma base significativa de CPU, memória, MBC1, PPU, sprites, DMA, timers e interrupções, mas ainda existem diferenças de comportamento e timing que podem afetar a compatibilidade com determinados softwares.
 
 Contribuições, testes e estudos sobre o hardware DMG são bem-vindos.
+
+# Agradecimentos
+Os sites abaixo foram usados como referencia ao decorrer deste projeto:
+* gbdev pandocs: https://gbdev.io/pandocs/
+* Gameboy Assembly Instruction Set: https://rgbds.gbdev.io/docs/v0.9.3/gbz80.7
+* Gameboy Assembly|Machine code reference: https://gbdev.io/gb-opcodes/optables/
+
+
