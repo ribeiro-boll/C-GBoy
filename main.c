@@ -1243,8 +1243,6 @@ void start_game(char* game_address) {
             memory.MBC_type = 5;
             memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
             break;
-
-
     }
     /*
     0x19  MBC5
@@ -3159,13 +3157,7 @@ int main(int argc, char*argv[]) {
                 //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
-                    if (SDL_QUIT) {
-                        free(memory.game_rom);
-                        //free(cpu.game_file);
-                        SDL_DestroyWindow(screen);
-                        SDL_Quit();
-                        exit(0);
-                    }
+
                     if (event.type == SDL_KEYUP) {
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
@@ -3194,6 +3186,13 @@ int main(int argc, char*argv[]) {
                         }
                     }
                     if (event.type == SDL_KEYDOWN) {
+                        if (SDL_QUIT) {
+                            free(memory.game_rom);
+                            //free(cpu.game_file);
+                            SDL_DestroyWindow(screen);
+                            SDL_Quit();
+                            exit(0);
+                        }
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
                                 on_left_button = true; break;
