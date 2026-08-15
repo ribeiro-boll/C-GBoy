@@ -13,6 +13,7 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
 * auxílio na interpretação de documentação.
 * correção de erros que me impediam de prosseguir no projeto por mais de 3 dias. (no geral, foram apenas bugs, nada de implementação)
 * o desenvolvimento deste README.md.
+* a criação da ROM com a logo do projet.
 
 > **Estado do projeto:** em desenvolvimento.
 >
