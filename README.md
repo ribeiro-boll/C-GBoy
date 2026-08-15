@@ -109,7 +109,7 @@ Os bits de entrada seguem a lógica ativa em nível baixo utilizada pelo Game Bo
 ---
 
 ## Windows Download & Installation
-[link](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip)
+[link]([https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.2/gameboy-windows.zip))
 
 ## Visão geral
 
