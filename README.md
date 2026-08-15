@@ -2,33 +2,35 @@
 
 <img width="320" height="488" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
 
-Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
+Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! — não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
 
-Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificil seria fazer isso?", e agora, aqui estamos.
+Este é meu primeiro projeto envolvendo emulação. A ideia surgiu depois de uma longa semana de férias da faculdade sem encontrar nenhum projeto que realmente me animasse. Até que pensei: **"O quão difícil seria fazer um emulador do zero?"** E agora, aqui estamos.
 
-O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 e MBC5 até o momento)**.
+O C-GBoy implementa os principais subsistemas do Game Boy DMG, incluindo a CPU **Sharp SM83**, barramento e mapa de memória, interrupções, timers, DMA, PPU, Background, Window, sprites, joypad, persistência de saves e banking de ROM/RAM através de **MBC1 e MBC5**.
 
+Durante o desenvolvimento, limitei o uso de IA ao mínimo possível, porque a principal ideia deste projeto sempre foi estudar como o portátil funciona e implementar seus componentes por conta própria. O uso ficou restrito principalmente a:
 
-Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque a ideia deste projeto foi aprender como portatil funciona, desse modo, utilizando apenas para:
-* auxílio na interpretação de documentação.
-* correção de erros que me impediam de prosseguir no projeto por mais de 3 dias. (no geral, foram apenas bugs, nada de implementação)
-* o desenvolvimento deste README.md.
-* a criação da ROM com a logo do projet.
+* auxílio na interpretação de documentação;
+* ajuda na investigação de bugs que me impediam de prosseguir por vários dias;
+* desenvolvimento e revisão deste `README.md`;
+* criação da ROM usada para exibir a logo do projeto.
 
 > **Estado do projeto:** em desenvolvimento.
 >
-> O emulador já é capaz de executar alguns jogos comerciais, mas ainda não possui precisão ciclo-a-ciclo e existem comportamentos do hardware original que precisam ser implementados ou revisados.
+> O C-GBoy já executa jogos reais de Game Boy e possui CPU, memória, vídeo, entrada, timers, interrupções, DMA e suporte a cartuchos funcionais. Ainda existem detalhes de timing e comportamentos específicos do hardware a serem refinados, além de subsistemas que não fazem parte da implementação atual, como a APU.
 
----
+# Aviso sobre ROMs e Boot ROM
 
-# Aviso sobre ROMs
+Este repositório **não inclui ROMs comerciais** e **não inclui a BIOS/Boot ROM original do Game Boy**.
 
-Este repositório não inclui ROMs comerciais.
+O C-GBoy inicia a execução diretamente em `0x0100`, utilizando um estado inicial definido pelo próprio emulador.
 
 Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para utilizar.
 
 ---
+
 # Índice
+
 - [Demonstrações](#demonstrações)
 - [Controles](#controles)
 - [Visão geral](#visão-geral)
@@ -38,17 +40,20 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 - [Compilação](#compilação)
 - [Execução](#execução)
 - [Arquitetura da CPU](#arquitetura-da-cpu)
-    - [Decodificação de opcodes](#decodificação-de-opcodes)
+  - [Decodificação de opcodes](#decodificação-de-opcodes)
 - [Stack](#stack)
 - [Mapa de memória](#mapa-de-memória)
 - [Cartridge / MBC](#cartridge--mbc)
+  - [ROM Only](#rom-only)
+  - [MBC1](#mbc1)
+  - [MBC5](#mbc5)
 - [Save RAM](#save-ram)
 - [Interrupções](#interrupções)
 - [HALT](#halt)
 - [Timers](#timers)
 - [DMA / OAM](#dma--oam)
 - [PPU](#ppu)
-    - [Modos da PPU](#modos-da-ppu)
+  - [Modos da PPU](#modos-da-ppu)
 - [Background](#background)
 - [Window](#window)
 - [Sprites](#sprites)
@@ -60,18 +65,15 @@ Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para
 - [Estrutura atual do projeto](#estrutura-atual-do-projeto)
 - [Limitações conhecidas](#limitações-conhecidas)
 - [Roadmap técnico](#roadmap-técnico)
-    - [1. CPU](#1-cpu)
-    - [2. Memory Bus](#2-memory-bus)
-    - [3. Timers](#3-timers)
-    - [4. PPU](#4-ppu)
-    - [5. Cartridge](#5-cartridge)
-    - [6. Infraestrutura](#6-infraestrutura)
-    - [7. APU](#7-apu)
+  - [1. CPU](#1-cpu)
+  - [2. Memory Bus](#2-memory-bus)
+  - [3. Timers](#3-timers)
+  - [4. PPU](#4-ppu)
+  - [5. Cartridge](#5-cartridge)
+  - [6. Infraestrutura](#6-infraestrutura)
 - [Objetivo do projeto](#objetivo-do-projeto)
-    - [Status](#status)
-- [Agradecimentos](#agradecimentos) 
-
----
+  - [Status](#status)
+- [Agradecimentos](#agradecimentos)
 
 # Demonstrações
 ### The Legend of Zelda: Link's Awakening
@@ -108,12 +110,9 @@ Os bits de entrada seguem a lógica ativa em nível baixo utilizada pelo Game Bo
 
 ---
 
-## Windows Download & Installation
-[link]([https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.2/gameboy-windows.zip))
+# Visão geral
 
-## Visão geral
-
-O C-GBoy tenta reproduzir o funcionamento do Game Boy em um nível relativamente baixo, em vez de apenas simular o resultado final das instruções.
+O C-GBoy reproduz o funcionamento do Game Boy em um nível relativamente baixo, mantendo CPU, memória, PPU, timers, DMA e interrupções sincronizados a partir dos ciclos consumidos pelas instruções.
 
 Cada instrução executada pela CPU retorna sua quantidade correspondente de ciclos. Esses ciclos são então utilizados para avançar outros componentes do sistema, como:
 
@@ -161,54 +160,120 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 
 # Funcionalidades atuais
 
-| Subsistema      | Estado               | Observações                                                                  |
-| --------------- |----------------------|------------------------------------------------------------------------------|
-| CPU SM83        | [x] Implementado     | tabela principal de opcodes implementada                                     |
-| Prefixo `CB`    | [x] Implementado     | Rotates, shifts, `SWAP`, `BIT`, `RES` e `SET` possuem handlers               |
-| Flags `Z N H C` | [x] Implementadas    | Manipulação centralizada no registrador `F`                                  |
-| Stack           | [x] Implementada     | `PUSH`, `POP`, `CALL`, `RET` e vetores de interrupção                        |
-| Interrupções    | [x] Implementadas    | VBlank, STAT, Timer, Serial e Joypad                                         |
-| HALT            | [x] Implementado     | Inclui lógica relacionada ao HALT bug                                        |
-| Timers          | [ ] Parcial          | DIV/TIMA/TMA/TAC implementados, mas ainda pode existir diferenças de timing  |
-| DMA OAM         | [x] Implementado     | Transferência de 160 bytes                                                   |
-| Memory Bus      | [x] Implementado     | Principais regiões disponíveis                                               |
-| ROM Only        | [x] Suportado        | Cartuchos sem MBC                                                            |
-| MBC1            | [x] implementado*    | Banking de ROM e RAM implementado, porém ainda requer testes mais precisos   |
-| MBC2            | [ ] Não implementado | Estrutura reservada                                                          |
-| MBC3            | [ ] Não implementado | Estrutura reservada                                                          |
-| MBC5            | [x] implementado*    | Banking de ROM e RAM implementado, porém ainda requer testes mais precisos                                                          |
-| PPU             | [x] implementado*    | Renderização baseada em scanlines funcional, porém ainda requer testes mais precisos |
-| Background      | [x] Implementado     | Scroll através de SCX/SCY                                                    |
-| Window          | [x] Implementada     | WX/WY e tile map configurável                                                |
-| Sprites 8×8     | [x] Implementados    | Inclui flip, palette e prioridade                                            |
-| Sprites 8×16    | [x] Implementados    | Seleção de pares de tiles                                                    |
-| Joypad          | [x] Implementado     | Mapeado para teclado                                                         |
-| Serial          | [ ] Stub             | Comportamento básico e solicitação de interrupção                            |
-| Save RAM        | [x] Implementado     | Arquivo `.cartram` para MBC1                                                 |
-| APU / Áudio     | [ ] Não implementado | Não existe subsistema de áudio atualmente                                    |
-| Game Boy Color  | [ ] Não suportado    | Implementação voltada ao DMG                                                 |
-| Boot ROM        | [ ] Não emulada      | Execução começa diretamente em `0x0100`, respeitando os direitos autorais    |
+| Subsistema      | Estado                  | Observações |
+| --------------- | ----------------------- | ----------- |
+| CPU SM83        | [x] Implementado        | Tabela principal de opcodes implementada |
+| Prefixo `CB`    | [x] Implementado        | Rotates, shifts, `SWAP`, `BIT`, `RES` e `SET` possuem handlers |
+| Flags `Z N H C` | [x] Implementadas       | Manipulação centralizada no registrador `F` |
+| Stack           | [x] Implementada        | `PUSH`, `POP`, `CALL`, `RET` e vetores de interrupção |
+| Interrupções    | [x] Implementadas       | VBlank, STAT, Timer, Serial e Joypad |
+| HALT            | [x] Implementado        | Inclui tratamento relacionado ao HALT bug |
+| Timers          | [ ] Parcial             | DIV/TIMA/TMA/TAC funcionais, ainda com diferenças de timing em casos específicos |
+| DMA OAM         | [x] Implementado        | Transferência de 160 bytes para OAM |
+| Memory Bus      | [x] Implementado        | Principais regiões do espaço de endereçamento disponíveis |
+| ROM Only        | [x] Suportado           | Cartuchos sem MBC |
+| MBC1            | [x] Implementado        | Banking de ROM e RAM funcional |
+| MBC2            | [ ] Não implementado    | Sem suporte no momento |
+| MBC3            | [ ] Não implementado    | Sem suporte no momento; RTC também não implementado |
+| MBC5            | [x] Implementado        | Banking de ROM de 9 bits e banking de RAM implementados |
+| PPU             | [x] Implementada        | Renderização baseada em scanlines |
+| Background      | [x] Implementado        | Scroll através de SCX/SCY |
+| Window          | [x] Implementada        | WX/WY e tile map configurável |
+| Sprites 8×8     | [x] Implementados       | Flip, palette e prioridade |
+| Sprites 8×16    | [x] Implementados       | Seleção de pares de tiles |
+| Joypad          | [x] Implementado        | Mapeado para teclado |
+| Serial          | [ ] Stub                | Comportamento básico e solicitação de interrupção |
+| Save RAM        | [x] Implementado        | Persistência em arquivo `.cartram` para os cartuchos atualmente suportados pelo sistema de save |
+| APU / Áudio     | [ ] Não implementado    | O emulador atualmente funciona sem áudio |
+| Game Boy Color  | [ ] Não suportado       | Implementação focada no hardware DMG |
+| Boot ROM        | [ ] Não utilizada       | A BIOS/Boot ROM original não é incluída; execução começa em `0x0100` |
 
 ---
 
 # Download e instalação para sistemas Windows
 
-1. Faça o download baixando o ultimo lançamento/release do github ou utilizando o link ao lado: [último lançamento](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.0/gameboy-windows.zip)
+A versão compilada para Windows pode ser obtida pela página de releases do projeto.
 
-2. Extraia em uma pasta (está pasta será o local de armazenamento das ROMs e dos Saves).
+**Download atual:** [C-GBoy v0.1.2 para Windows](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.2/gameboy-windows.zip)
 
-3. Crie um atalho do emulador, vá nas propriedades do atalho e no campo chamado: "Destino", digite o nome da ROM que será emulada, assim como a imagem abaixo:
+## 1. Baixando e extraindo
 
- <img width="343" height="58" alt="image" src="https://github.com/user-attachments/assets/068ec355-e314-448e-8009-a531c74a3793" />
+1. Baixe o arquivo `.zip` da release.
+2. Extraia todo o conteúdo para uma pasta de sua preferência.
+3. Mantenha os arquivos distribuídos no pacote dentro da pasta extraída.
+4. Coloque a ROM que deseja executar na mesma pasta do emulador ou em uma subpasta, por exemplo:
+
+```text
+C-GBoy/
+├── gameboy.exe
+├── ...
+└── roms/
+    └── jogo.gb
+```
 
 > [!WARNING]
->   1. **Não utilize espaços ou caracteres especiais no nome da ROM**.
->   2. **Caso queira usar uma pasta dentro do diretorio do emulador para armazenar as ROMS, siga a mesma regra acima para nomes, dito isto, digite da seguinte forma "nome_da_pasta/ROM_selecionada.gb"**.
+> Para evitar problemas com a forma como o caminho é passado ao executável, prefira nomes de ROMs e pastas sem espaços ou caracteres especiais.
 
+## 2. Executando pelo Prompt de Comando / PowerShell
 
-4. Para rodar o C-GBoy e iniciar a emulação da ROM, apenas execute o atalho.
+Abra um terminal dentro da pasta do C-GBoy e informe o caminho da ROM como primeiro argumento:
 
-5. Não esqueça de dar uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador é apenas possivel via o controle oficial do emulador.
+```powershell
+.\gameboy.exe roms\jogo.gb
+```
+
+Se a ROM estiver na mesma pasta do executável:
+
+```powershell
+.\gameboy.exe jogo.gb
+```
+
+## 3. Criando um atalho para uma ROM
+
+Também é possível criar um atalho do Windows que abre diretamente um jogo específico:
+
+1. Clique com o botão direito em `gameboy.exe`.
+2. Escolha **Criar atalho**.
+3. Clique com o botão direito no novo atalho e abra **Propriedades**.
+4. No campo **Destino**, mantenha o caminho do executável e adicione o caminho da ROM depois dele.
+
+Exemplo:
+
+```text
+"C:\C-GBoy\gameboy.exe" roms\jogo.gb
+```
+
+Se preferir manter cada ROM na pasta principal:
+
+```text
+"C:\C-GBoy\gameboy.exe" jogo.gb
+```
+
+A imagem abaixo mostra um exemplo da configuração do campo **Destino**:
+
+<img width="343" height="58" alt="Exemplo de configuração de atalho no Windows" src="https://github.com/user-attachments/assets/068ec355-e314-448e-8009-a531c74a3793" />
+
+Depois disso, basta abrir o atalho para iniciar o C-GBoy diretamente com aquela ROM.
+
+## 4. Saves
+
+Quando o cartucho utiliza RAM persistente e o tipo é suportado pelo sistema de save atual, o C-GBoy cria um arquivo auxiliar com extensão:
+
+```text
+.cartram
+```
+
+Esse arquivo deve permanecer acessível ao emulador para que o save possa ser carregado novamente.
+
+## 5. Fechando o emulador
+
+Consulte a seção [Controles](#controles):
+
+- `ESC` duas vezes: salva e encerra;
+- `Backspace` duas vezes: encerra sem salvar explicitamente.
+
+> [!IMPORTANT]
+> Nenhuma ROM comercial ou BIOS/Boot ROM do Game Boy acompanha a release do C-GBoy.
 
 ---
 
@@ -437,25 +502,51 @@ Mapa atual:
 
 # Cartridge / MBC
 
-O tipo de cartucho é obtido diretamente do header da ROM:
+O tipo do cartucho é identificado a partir do header da ROM, principalmente pelo byte:
 
 ```text
 0x0147 - Cartridge Type
 ```
 
+O loader utiliza essa informação para encaminhar os acessos da região de cartucho ao mapper correspondente.
+
 ## ROM Only
 
-Cartuchos com tipo `0x00` acessam diretamente `memory.game_rom`.
+Cartuchos do tipo ROM Only acessam diretamente o conteúdo carregado em `memory.game_rom`.
 
-Não há troca de banco.
+Nesse caso não existe troca de bancos através de MBC.
 
----
+## MBC1
 
-## MBC
+O C-GBoy possui suporte a MBC1, incluindo:
 
-Os tipos de cartucho MBC1 e MBC5 identificados pelo loader são normalizados internamente para o handler MBC.
+* habilitação da RAM externa;
+* seleção dos bits inferiores do banco de ROM;
+* seleção dos bits superiores;
+* modos de banking;
+* banking de RAM;
+* acesso à RAM externa.
 
-A implementação do MBC1 e MBC5 ainda deve ser considerada experimental. Casos extremos de banking e diferenças entre os modos precisam de validação adicional contra hardware/documentação.
+A implementação já executa jogos MBC1 e continua sendo validada em casos extremos de banking e timing.
+
+## MBC5
+
+O C-GBoy também possui suporte a MBC5.
+
+O mapper utiliza um número de banco de ROM de **9 bits**, permitindo selecionar diretamente bancos na janela `0x4000-0x7FFF`, além de possuir seleção independente do banco de RAM externa.
+
+A implementação atual cobre:
+
+* habilitação de RAM;
+* 8 bits inferiores do banco de ROM;
+* 9º bit do banco de ROM;
+* seleção independente do banco de RAM;
+* leitura e escrita na RAM externa;
+* cálculo do banco físico de acordo com o tamanho da ROM carregada.
+
+Isso amplia bastante a compatibilidade do C-GBoy com jogos maiores e homebrews modernos que continuam compatíveis com o hardware DMG.
+
+As variantes MBC5 com **rumble** ainda não possuem integração específica com um dispositivo de vibração.
 
 MBC2 e MBC3 ainda não possuem implementação funcional.
 
@@ -463,7 +554,7 @@ MBC2 e MBC3 ainda não possuem implementação funcional.
 
 # Save RAM
 
-Para cartuchos tratados como MBC1, a RAM externa é persistida em um arquivo auxiliar.
+O C-GBoy possui persistência de RAM de cartucho através de arquivos auxiliares com extensão `.cartram`.
 
 Se a ROM for:
 
@@ -471,16 +562,10 @@ Se a ROM for:
 roms/game.gb
 ```
 
-o save será armazenado como:
+o arquivo de save correspondente utiliza o nome:
 
 ```text
 roms/game.gb.cartram
-```
-
-O formato atual é uma cópia binária bruta dos quatro bancos internos:
-
-```text
-4 × 0x2000 bytes = 32768 bytes
 ```
 
 O save é carregado durante a inicialização através de:
@@ -489,7 +574,7 @@ O save é carregado durante a inicialização através de:
 load_game_save_on_start()
 ```
 
-e escrito através de:
+e persistido através de:
 
 ```c
 persist_save_game_on_exit()
@@ -497,7 +582,9 @@ persist_save_game_on_exit()
 
 Também existe autosave periódico durante a execução.
 
-O diretório onde a ROM está localizada deve possuir permissão de escrita para que o arquivo `.cartram` possa ser criado.
+A RAM de cartucho é mantida separada do restante da memória do Game Boy e respeita o banking do mapper correspondente.
+
+O diretório utilizado para o arquivo `.cartram` precisa possuir permissão de escrita.
 
 ---
 
@@ -879,7 +966,7 @@ com alvo aproximado de:
 
 por frame.
 
-O controle de timing ainda é aproximado e não deve ser considerado uma implementação cycle-accurate.
+O controle de timing ainda é aproximado e não busca precisão cycle-accurate no estado atual.
 
 ---
 
@@ -999,7 +1086,8 @@ Memory Bus
 └── IE
 
 Cartridge
-└── MBC1
+├── MBC1
+└── MBC5
 
 PPU
 ├── timing
@@ -1026,107 +1114,99 @@ Uma evolução natural do projeto é transformar essas divisões lógicas em mó
 
 # Limitações conhecidas
 
-O emulador ainda está em desenvolvimento e possui diferenças importantes em relação ao hardware original.
+O C-GBoy está em desenvolvimento e ainda existem comportamentos do hardware original que podem ser refinados.
 
-Entre os pontos que ainda precisam de revisão estão:
+Entre os principais pontos pendentes estão:
 
-* validação do arquivo de ROM antes de utilizar `fopen`, `fread` e `malloc`;
-* validação do tamanho da ROM antes de acessos ao buffer;
-* suporte completo aos diferentes tipos de cartridge header;
+* validação mais robusta do arquivo de ROM e do header;
+* suporte completo aos diferentes tipos de cartucho;
 * implementação de MBC2;
 * implementação de MBC3 e RTC;
-* escrita correta na Echo RAM;
-* comportamento individual dos registradores especiais de I/O;
-* comportamento preciso de `DIV`;
+* suporte específico às variantes MBC5 com rumble;
+* escrita e comportamento completos da Echo RAM;
+* comportamento individual de todos os registradores especiais de I/O;
+* comportamento mais preciso de `DIV`;
 * edge detection dos timers;
 * atraso de overflow/reload do TIMA;
-* revisão de alguns casos da ALU envolvendo carry;
-* revisão completa de `HALT`, `EI` e interrupções;
+* revisão de casos específicos da ALU e flags;
+* refinamento de `HALT`, `EI` e interrupções em casos extremos;
 * timing variável do Mode 3;
-* restrições de acesso a VRAM/OAM dependendo do modo da PPU;
+* restrições exatas de acesso a VRAM/OAM de acordo com o modo da PPU;
 * comportamento do LCD ao ser ligado/desligado;
-* STAT interrupt line com detecção real de rising edge;
-* prioridades de sprites em todos os casos de sobreposição;
-* timing preciso do DMA;
+* STAT interrupt line com detecção precisa de rising edge;
+* refinamento de prioridade de sprites em todos os casos de sobreposição;
+* timing mais preciso do DMA;
 * comportamento do barramento durante DMA;
 * Serial completo;
-* APU;
-* tratamento do evento `SDL_QUIT`;
-* scaling da janela;
-* validação de `argc`;
-* tratamento de erros;
-* testes automatizados;
-* reorganização do projeto em módulos.
+* APU / áudio;
+* tratamento completo do evento `SDL_QUIT`;
+* scaling configurável da janela;
+* tratamento de erros mais robusto;
+* ampliação dos testes automatizados;
+* reorganização do projeto em módulos separados.
+
+Essas limitações afetam principalmente precisão de hardware e compatibilidade com casos específicos; elas não alteram o fato de que o C-GBoy já executa ROMs reais utilizando os subsistemas implementados.
 
 ---
 
 # Roadmap técnico
 
-Uma possível ordem de evolução do projeto é:
+O foco atual é aumentar a compatibilidade e refinar os componentes já implementados.
 
 ### 1. CPU
 
-* finalizar validação da tabela principal;
-* validar todos os opcodes `CB`;
-* revisar flags;
-* revisar timings;
-* finalizar comportamento de `HALT`, `STOP`, `EI`, `DI` e interrupções.
+* ampliar validação da tabela principal;
+* validar todos os opcodes `CB` em casos extremos;
+* revisar flags e timings;
+* refinar `HALT`, `STOP`, `EI`, `DI` e interrupções.
 
 ### 2. Memory Bus
 
-* formalizar registradores de I/O;
-* implementar corretamente Echo RAM;
-* implementar regiões proibidas;
+* formalizar o comportamento dos registradores de I/O;
+* completar Echo RAM;
+* implementar corretamente regiões proibidas;
 * adicionar restrições de acesso relacionadas à PPU e DMA.
 
 ### 3. Timers
 
-* migrar para modelo baseado nos bits internos do DIV;
+* migrar para um modelo mais fiel baseado nos bits internos do DIV;
 * implementar falling-edge do sinal selecionado;
-* reproduzir overflow/reload do TIMA.
+* reproduzir com maior precisão overflow/reload do TIMA.
 
 ### 4. PPU
 
 * revisar transições de modo;
-* implementar STAT interrupt line;
-* melhorar prioridade de objetos;
-* implementar timing variável;
-* validar Window e sprites contra test ROMs.
+* refinar STAT interrupt line;
+* melhorar casos extremos de prioridade de objetos;
+* implementar timing variável do Mode 3;
+* ampliar validação de Window e sprites.
 
 ### 5. Cartridge
+
+* ampliar testes do MBC1 e MBC5;
 * implementar MBC2;
 * implementar MBC3 + RTC;
-* interpretar corretamente ROM size e RAM size pelo header.
+* utilizar de forma mais completa os campos de ROM size e RAM size do header;
+* tratar variantes de MBC5 com rumble.
 
 ### 6. Infraestrutura
 
-* separar o código em módulos;
-* criar sistema de testes automatizados;
+* separar o código em módulos `.c/.h`;
+* ampliar o sistema de testes automatizados;
 * adicionar logs configuráveis;
-* adicionar tratamento robusto de erros;
+* melhorar tratamento de erros;
 * criar configuração de controles;
 * adicionar scaling da tela.
 
-### 7. APU
-
-Implementar os quatro canais do Game Boy:
-
-```text
-CH1 - Square + Sweep
-CH2 - Square
-CH3 - Wave
-CH4 - Noise
-```
-
-e posteriormente integrar a saída com SDL Audio.
+> A APU não faz parte do roadmap atual. O C-GBoy continuará funcionando sem áudio enquanto o foco do projeto permanecer em CPU, vídeo, memória, cartuchos e compatibilidade.
 
 ---
 
 # Objetivo do projeto
 
-Este projeto tem foco educacional e experimental.
+Este projeto tem foco educacional e experimental, mas o resultado é um **emulador funcional de Game Boy DMG**.
 
-Além de executar jogos, a implementação busca explorar diretamente conceitos como:
+Além de executar jogos, o desenvolvimento do C-GBoy explora diretamente conceitos como:
 
 * arquitetura de CPUs de 8 bits;
 * interpretação de instruction sets;
@@ -1147,16 +1227,18 @@ Por esse motivo, diversas partes são implementadas explicitamente em vez de abs
 
 ## Status
 
-O projeto ainda **não deve ser considerado um emulador Game Boy COMPLETO ou cycle-accurate**.
+O C-GBoy é um **emulador de Game Boy DMG em desenvolvimento**, com CPU SM83, memória, PPU, sprites, DMA, timers, interrupções, joypad, MBC1 e MBC5 implementados.
 
-A implementação atual já possui uma base significativa de CPU, memória, MBC1, PPU, sprites, DMA, timers e interrupções, mas ainda existem diferenças de comportamento e timing que podem afetar a compatibilidade com determinados softwares.
+Ele já executa jogos reais e homebrews compatíveis com os recursos atualmente suportados.
+
+O projeto ainda possui diferenças de timing e alguns subsistemas ausentes — principalmente áudio e suporte ao Game Boy Color —, mas essas são limitações da implementação atual, não uma mudança na natureza do projeto.
 
 Contribuições, testes e estudos sobre o hardware DMG são bem-vindos.
 
 # Agradecimentos
-Os sites abaixo foram usados como referencia ao decorrer deste projeto:
-* gbdev pandocs: https://gbdev.io/pandocs/
-* Gameboy Assembly Instruction Set: https://rgbds.gbdev.io/docs/v0.9.3/gbz80.7
-* Gameboy Assembly|Machine code reference: https://gbdev.io/gb-opcodes/optables/
 
+Os sites abaixo foram utilizados como referência durante o desenvolvimento do projeto:
 
+* Pan Docs: https://gbdev.io/pandocs/
+* Game Boy Assembly Instruction Set: https://rgbds.gbdev.io/docs/v0.9.3/gbz80.7
+* Game Boy Assembly / Machine Code Reference: https://gbdev.io/gb-opcodes/optables/
