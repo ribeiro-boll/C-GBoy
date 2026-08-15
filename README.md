@@ -21,6 +21,13 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
 
 ---
 
+# Aviso sobre ROMs
+
+Este repositório não inclui ROMs comerciais.
+
+Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para utilizar.
+
+---
 # Índice
 - [Demonstrações](#demonstrações)
 - [Controles](#controles)
@@ -63,7 +70,6 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
     - [6. Infraestrutura](#6-infraestrutura)
     - [7. APU](#7-apu)
 - [Objetivo do projeto](#objetivo-do-projeto)
-- [Aviso sobre ROMs](#aviso-sobre-roms)
     - [Status](#status)
 
 ---
@@ -203,7 +209,7 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 
 4. Para rodar o C-GBoy e iniciar a emulação da ROM, apenas execute o atalho.
 
-5. Não esqueça de der uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador, apenas é possivel via o controle oficial.
+5. Não esqueça de dar uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador é apenas possivel via o controle oficial do emulador.
 
 ---
 
@@ -1171,19 +1177,9 @@ Além de executar jogos, a implementação busca explorar diretamente conceitos 
 
 Por esse motivo, diversas partes são implementadas explicitamente em vez de abstraídas por bibliotecas externas.
 
----
-
-# Aviso sobre ROMs
-
-Este repositório não inclui ROMs comerciais.
-
-Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para utilizar.
-
----
-
 ## Status
 
-O projeto ainda **não deve ser considerado um emulador Game Boy completo ou cycle-accurate**.
+O projeto ainda **não deve ser considerado um emulador Game Boy COMPLETO ou cycle-accurate**.
 
 A implementação atual já possui uma base significativa de CPU, memória, MBC1, PPU, sprites, DMA, timers e interrupções, mas ainda existem diferenças de comportamento e timing que podem afetar a compatibilidade com determinados softwares.
 
