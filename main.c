@@ -28,6 +28,22 @@ typedef struct MBC1{
     uint8_t ROM_or_RAM_bank_high_bits_arr[0x2000];      // 0x4000 - 0x5FFF             write only | or Upper Bits of ROM Bank Number (Write Only)
     uint8_t Banking_mode_select_arr[0x2000];            // 0x6000 - 0x7FFF             write only
 } MBC1;
+
+typedef struct MBC5{
+    bool ram_bank_on_bool;
+    uint8_t ROM_bank_low_bits; // ate
+    uint8_t ROM_or_RAM_bank_high_bits;
+
+    uint8_t curr_ram_bank_index;
+
+    uint8_t rom_banks_avaliable;
+
+    uint8_t cart_RAM[16][0x2000];
+    uint8_t Ram_bank_Enable_arr[0x2000];                // 0x0000 - 0x1FFF             write only
+    uint8_t ROM_bank_low_bits_arr[0x2000];              // 0x2000 - 0x3FFF             write only
+    uint8_t ROM_or_RAM_bank_high_bits_arr[0x2000];      // 0x4000 - 0x5FFF             write only | or Upper Bits of ROM Bank Number (Write Only)
+    uint8_t Banking_mode_select_arr[0x2000];            // 0x6000 - 0x7FFF             write only
+} MBC5;
 //
 // typedef struct MBC5{
 //     uint8_t
@@ -43,6 +59,7 @@ typedef struct MBC1{
 
 typedef struct MBC_Root{
     MBC1 MBC1;
+    MBC5 MBC5;
 }MBC_Root;
 typedef struct Memory {
     uint8_t MBC_type;
@@ -56,7 +73,7 @@ typedef struct Memory {
     uint8_t HRAM[0x007F];    // inicia -> 0xFF80 | final ->0xFFFE
     uint8_t IE;              // endereço -> 0xFFFF
     MBC_Root MBC_register;
-    int game_rom_lenght;
+    long int game_rom_lenght;
 } GB_Memory;
 
 
@@ -641,7 +658,7 @@ uint8_t read_noMBC(uint16_t endereco) {
 }
 void MBC1_bus_write(uint16_t address, uint8_t value) {
     uint8_t valor_processado;
-    if (address < 0x1FFF) {
+    if (address <= 0x1FFF) {
         memory.MBC_register.MBC1.Ram_bank_Enable_arr[address] = value;
         memory.MBC_register.MBC1.ram_bank_on_bool = ((value & 0b00001111) == 0xA) ? true : false;
     }
@@ -670,7 +687,7 @@ void MBC1_bus_write(uint16_t address, uint8_t value) {
 
 uint8_t MBC1_bus_read(uint16_t address) {
     uint8_t valor_processado;
-    if (address < 0x3FFF) {
+    if (address <= 0x3FFF) {
         return (memory.MBC_register.MBC1.banking_1_on && memory.MBC_register.MBC1.is_bigger_then_512KB) ? memory.game_rom[((uint32_t)(memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits << 5) * 0x4000) + address] : memory.game_rom[address];
     }
     if (address >= 0x4000 && address <= 0x7FFF) {
@@ -683,13 +700,53 @@ uint8_t MBC1_bus_read(uint16_t address) {
         uint16_t rom_bank = ((memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits<<5) | memory.MBC_register.MBC1.ROM_bank_low_bits);
         if (rom_bank ==0) rom_bank =1;
         uint32_t true_address = (memory.MBC_register.MBC1.banking_1_on) ? ((rom_bank * 0x4000) + (address - 0x4000)) : ((memory.MBC_register.MBC1.ROM_bank_low_bits) * 0x4000) + (address- 0x4000);
-        return memory.game_rom[true_address];
+        return memory.game_rom[true_address % memory.game_rom_lenght];
     }
     if (address >= 0xA000 && address <= 0xBFFF && memory.MBC_register.MBC1.ram_bank_on_bool) {
         if (!memory.MBC_register.MBC1.is_bigger_then_512KB) {
             return memory.MBC_register.MBC1.cart_RAM[memory.MBC_register.MBC1.ROM_or_RAM_bank_high_bits][address-0xA000];
         }
         return memory.MBC_register.MBC1.cart_RAM[0][address -0xA000];
+    }
+    return 0;
+}
+
+void MBC5_bus_write(uint16_t address, uint8_t value) {
+    uint8_t valor_processado;
+    if (address <= 0x1FFF) {
+        memory.MBC_register.MBC5.Ram_bank_Enable_arr[address] = value;
+        memory.MBC_register.MBC5.ram_bank_on_bool = ((value & 0b00001111) == 0xA) ? true : false;
+    }
+    else if (address >= 0x2000 && address <= 0x2FFF) {
+        memory.MBC_register.MBC5.ROM_bank_low_bits_arr[address-0x2000] = value;
+        memory.MBC_register.MBC5.ROM_bank_low_bits = value;
+    }
+    else if (address >= 0x3000 && address <= 0x3FFF) {
+        valor_processado = value & 0b00000001;
+        memory.MBC_register.MBC5.ROM_or_RAM_bank_high_bits_arr[address-0x3000] = value;
+        memory.MBC_register.MBC5.ROM_or_RAM_bank_high_bits = valor_processado;
+    }
+    else if (address >= 0x4000 && address <= 0x5FFF) {
+        memory.MBC_register.MBC5.Ram_bank_Enable_arr[address-0x4000] = value;
+        memory.MBC_register.MBC5.curr_ram_bank_index = value % 16;
+    }
+    else if (address >= 0xA000 && address <= 0xBFFF && memory.MBC_register.MBC5.ram_bank_on_bool) {
+        memory.MBC_register.MBC5.cart_RAM[memory.MBC_register.MBC5.curr_ram_bank_index][address - 0xA000] = value;
+    }
+}
+
+uint8_t MBC5_bus_read(uint16_t address) {
+    uint8_t valor_processado;
+    if (address <= 0x3FFF) {
+        return memory.game_rom[address];
+    }
+    if (address >= 0x4000 && address <= 0x7FFF) {
+        uint16_t rom_bank = ((memory.MBC_register.MBC5.ROM_or_RAM_bank_high_bits<<8) | memory.MBC_register.MBC5.ROM_bank_low_bits)% memory.MBC_register.MBC5.rom_banks_avaliable;
+        uint32_t true_address = ((rom_bank * 0x4000) + (address - 0x4000));
+        return memory.game_rom[true_address];
+    }
+    if (address >= 0xA000 && address <= 0xBFFF && memory.MBC_register.MBC5.ram_bank_on_bool) {
+        return memory.MBC_register.MBC5.cart_RAM[memory.MBC_register.MBC5.curr_ram_bank_index][address -0xA000];
     }
     return 0;
 }
@@ -711,7 +768,7 @@ uint8_t read_from_memory_8bit(uint16_t address) {
             case 0x01: return MBC1_bus_read(address); break;//TODO: implementar tipo MBC com variaveis
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: return MBC5_bus_read(address); break;
         }
     }
     if (address >= 0x4000  && 0x7FFF >= address) {
@@ -720,7 +777,7 @@ uint8_t read_from_memory_8bit(uint16_t address) {
             case 0x01: return MBC1_bus_read(address); break;
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: return MBC5_bus_read(address); break;
         }
     }
     if (address >= 0x8000 && 0x9FFF >= address) return memory.VRAM[address-0x8000];
@@ -730,7 +787,7 @@ uint8_t read_from_memory_8bit(uint16_t address) {
             case 0x01: return MBC1_bus_read(address); break;//TODO: implementar tipo MBC com variaveis
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: return MBC5_bus_read(address); break;
         }
     if (address >= 0xC000 && 0xDFFF >= address) return memory.WRAM[address - 0xC000];
     if (address >= 0xE000 && 0xFDFF >= address) return memory.WRAM[address - 0xE000];
@@ -779,7 +836,7 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
             case 0x01: MBC1_bus_write(address, variable); break;//TODO: implementar tipo MBC com variaveis
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: MBC5_bus_write(address, variable); break;
         }
     }
     else if (address >= 0x4000  && 0x7FFF >= address) {
@@ -788,7 +845,7 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
             case 0x01: MBC1_bus_write(address, variable); break;
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: MBC5_bus_write(address, variable); break;
         }
     }
     else if (address >= 0x8000 && 0x9FFF >= address) memory.VRAM[address-0x8000] = variable;
@@ -805,7 +862,7 @@ void write_into_memory_8bit(uint16_t address, uint8_t variable) {
             case 0x01: MBC1_bus_write(address, variable); break;//TODO: implementar tipo MBC com variaveis
             case 0x02: break;
             case 0x03: break;
-            case 0x05: break;
+            case 0x05: MBC5_bus_write(address, variable); break;
         }
     }
     else if (address >= 0xC000 && 0xDFFF >= address) memory.WRAM[address - 0xC000] = variable;
@@ -1148,29 +1205,57 @@ void start_game(char* game_address) {
     memory.MBC_type = memory.game_rom[0x0147];
     memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
     printf("0x%04x\n",memory.MBC_type);
-    if (memory.game_rom_lenght > 534*1024) {
-
-        switch (memory.MBC_type) {
-            case 1:
-            case 2:
-            case 3:
+    switch (memory.MBC_type) {
+        case 1:
+        case 2:
+        case 3:
+            if (memory.game_rom_lenght > 534*1024) {
                 memory.MBC_type =1;
                 memory.MBC_register.MBC1.is_bigger_then_512KB = true;
                 memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
-        }
-    }
-    else {
-        switch (memory.MBC_type) {
-            case 1:
-            case 2:
-            case 3:
+            }
+            else {
                 memory.MBC_type = 1;
                 memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
                 memory.MBC_register.MBC1.is_bigger_then_512KB = false;
-        }
+            }
+            break;
+        case 0x19:
+        case 0x1A:
+        case 0x1B:
+        case 0x1C:
+        case 0x1D:
+        case 0x1E:
+            /*
+            00 = 32 KiB  = 2 bancos
+01 = 64 KiB  = 4 bancos
+02 = 128 KiB = 8 bancos
+03 = 256 KiB = 16 bancos
+04 = 512 KiB = 32 bancos
+05 = 1 MiB   = 64 bancos
+06 = 2 MiB   = 128 bancos
+07 = 4 MiB   = 256 bancos
+08 = 8 MiB   = 512 bancos
+            */
+            uint16_t max_banks = 2;
+            for (int i = 0;i<memory.game_rom[0x148]; i++) max_banks*=2;
+            memory.MBC_register.MBC5.rom_banks_avaliable = max_banks;
+            memory.MBC_type = 5;
+            memory.MBC_register.MBC1.ROM_bank_low_bits = 1;
+            break;
+
+
     }
-    load_game_save_on_start();
+    /*
+    0x19  MBC5
+0x1A  MBC5 + RAM
+0x1B  MBC5 + RAM + BATTERY
+0x1C  MBC5 + RUMBLE
+0x1D  MBC5 + RUMBLE + RAM
+0x1E  MBC5 + RUMBLE + RAM + BATTERY
+    */
     fclose(fl);
+    load_game_save_on_start();
 }
 
 //______________________________________
@@ -3074,6 +3159,13 @@ int main(int argc, char*argv[]) {
                 //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
+                    if (SDL_QUIT) {
+                        free(memory.game_rom);
+                        //free(cpu.game_file);
+                        SDL_DestroyWindow(screen);
+                        SDL_Quit();
+                        exit(0);
+                    }
                     if (event.type == SDL_KEYUP) {
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:

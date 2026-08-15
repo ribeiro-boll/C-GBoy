@@ -4,7 +4,7 @@ Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Colo
 
 Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificl seria fazer isso?", e agora, aqui estamos.
 
-O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 até o momento)**.
+O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 e MBC5 até o momento)**.
 
 Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque a ideia deste projeto foi aprender como portatil funciona, desse modo, utilizando apenas para:
 * auxílio na interpretação de documentação.
@@ -169,7 +169,7 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 | MBC1            | [x] implementado*    | Banking de ROM e RAM implementado, porém ainda requer testes mais precisos   |
 | MBC2            | [ ] Não implementado | Estrutura reservada                                                          |
 | MBC3            | [ ] Não implementado | Estrutura reservada                                                          |
-| MBC5            | [ ] Não implementado | Estrutura reservada                                                          |
+| MBC5            | [x] implementado*    | Banking de ROM e RAM implementado, porém ainda requer testes mais precisos                                                          |
 | PPU             | [x] implementado*    | Renderização baseada em scanlines funcional, porém ainda requer testes mais precisos |
 | Background      | [x] Implementado     | Scroll através de SCX/SCY                                                    |
 | Window          | [x] Implementada     | WX/WY e tile map configurável                                                |
@@ -444,39 +444,13 @@ Não há troca de banco.
 
 ---
 
-## MBC1
+## MBC
 
-Os tipos de cartucho MBC1 identificados pelo loader são normalizados internamente para o handler MBC1.
+Os tipos de cartucho MBC1 e MBC5 identificados pelo loader são normalizados internamente para o handler MBC.
 
-A implementação possui:
+A implementação do MBC1 e MBC5 ainda deve ser considerada experimental. Casos extremos de banking e diferenças entre os modos precisam de validação adicional contra hardware/documentação.
 
-* habilitação de RAM;
-* 5 bits inferiores do banco de ROM;
-* 2 bits superiores;
-* seleção de modo de banking;
-* até quatro bancos de RAM de 8 KiB;
-* banking para ROMs maiores;
-* persistência da RAM externa.
-
-Estrutura principal:
-
-```c
-typedef struct MBC1 {
-    bool is_bigger_then_512KB;
-    bool ram_bank_on_bool;
-
-    uint8_t ROM_bank_low_bits;
-    uint8_t ROM_or_RAM_bank_high_bits;
-
-    bool banking_1_on;
-
-    uint8_t cart_RAM[4][0x2000];
-} MBC1;
-```
-
-A implementação de MBC1 ainda deve ser considerada experimental. Casos extremos de banking e diferenças entre os modos precisam de validação adicional contra hardware/documentação.
-
-MBC2, MBC3 e MBC5 ainda não possuem implementação funcional.
+MBC2 e MBC3 ainda não possuem implementação funcional.
 
 ---
 
@@ -1052,10 +1026,8 @@ Entre os pontos que ainda precisam de revisão estão:
 * validação do arquivo de ROM antes de utilizar `fopen`, `fread` e `malloc`;
 * validação do tamanho da ROM antes de acessos ao buffer;
 * suporte completo aos diferentes tipos de cartridge header;
-* MBC1 em casos extremos de banking;
 * implementação de MBC2;
 * implementação de MBC3 e RTC;
-* implementação de MBC5;
 * escrita correta na Echo RAM;
 * comportamento individual dos registradores especiais de I/O;
 * comportamento preciso de `DIV`;
