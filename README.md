@@ -1,15 +1,19 @@
 # C-GBoy
 
+<img width="160" height="244" alt="image" src="https://github.com/user-attachments/assets/c954b6a4-6186-4d26-8434-3d68af4c29ac" />
+
 Um emulador de **Nintendo Game Boy clássico (DMG apenas!!! - não Game Boy Color!!!)** desenvolvido do zero em **C**, utilizando **SDL2** para renderização, entrada e controle da janela.
 
-Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificl seria fazer isso?", e agora, aqui estamos.
+Este é meu primeiro projeto envolvendo emulação. A ideia surgiu após uma longa semana de férias da faculdade sem ter projetos para fazer, dai pensei: "O quão dificil seria fazer isso?", e agora, aqui estamos.
 
 O projeto implementa os principais subsistemas do console, incluindo a CPU **Sharp SM83**, barramento de memória, interrupções, timers, DMA, PPU, sprites, joypad e suporte a banking de ROM/RAM através de MBC **(apenas MBC1 e MBC5 até o momento)**.
+
 
 Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque a ideia deste projeto foi aprender como portatil funciona, desse modo, utilizando apenas para:
 * auxílio na interpretação de documentação.
 * correção de erros que me impediam de prosseguir no projeto por mais de 3 dias. (no geral, foram apenas bugs, nada de implementação)
 * o desenvolvimento deste README.md.
+* a criação da ROM com a logo do projet.
 
 > **Estado do projeto:** em desenvolvimento.
 >
@@ -17,11 +21,17 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
 
 ---
 
-# Índice
+# Aviso sobre ROMs
 
+Este repositório não inclui ROMs comerciais.
+
+Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para utilizar.
+
+---
+# Índice
+- [Demonstrações](#demonstrações)
 - [Controles](#controles)
-    - [Demonstrações](#demonstrações)
-    - [Visão geral](#visão-geral)
+- [Visão geral](#visão-geral)
 - [Funcionalidades atuais](#funcionalidades-atuais)
 - [Download e instalação para sistemas Windows](#download-e-instalação-para-sistemas-windows)
 - [Requisitos Linux](#requisitos-linux)
@@ -60,10 +70,24 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
     - [6. Infraestrutura](#6-infraestrutura)
     - [7. APU](#7-apu)
 - [Objetivo do projeto](#objetivo-do-projeto)
-- [Aviso sobre ROMs](#aviso-sobre-roms)
     - [Status](#status)
 
 ---
+
+# Demonstrações
+### The Legend of Zelda: Link's Awakening
+<img width="160" height="244" alt="ezgif-5759ad37891f8ba8" src="https://github.com/user-attachments/assets/9e4792e9-58fa-412c-9235-ef68b63c552d" />
+
+
+### Tetris
+<img width="160" height="244" alt="ezgif-5754264bdc134c25" src="https://github.com/user-attachments/assets/ba760557-561e-4080-83d8-ea43208b9105" />
+
+
+### Pocket Monsters Midori
+<img width="160" height="244" alt="ezgif-5a65b8ecf8475fc2" src="https://github.com/user-attachments/assets/6e0116a8-ecf8-422a-b852-cd9a24ea11d2" />
+
+
+
 # Controles
 
 | Game Boy                       | Teclado                |
@@ -82,22 +106,6 @@ Durante o desenvolvimento, limitei o uso de IA no mínimo possível, até porque
 O estado dos botões é refletido no registrador `P1/JOYP` em `0xFF00`.
 
 Os bits de entrada seguem a lógica ativa em nível baixo utilizada pelo Game Boy.
-
----
-
-## Demonstrações
-
-### Alleyway
-
-![Alleyway](images/alleyway.gif)
-
-### Tetris
-
-![Tetris](images/tetris.gif)
-
-### The Legend of Zelda: Link's Awakening
-
-![The Legend of Zelda: Link's Awakening](images/zelda.gif)
 
 ---
 
@@ -201,7 +209,7 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 
 4. Para rodar o C-GBoy e iniciar a emulação da ROM, apenas execute o atalho.
 
-5. Não esqueça de der uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador, apenas é possivel via o controle oficial.
+5. Não esqueça de dar uma olhada no esquema de controles do C-GBoy, pois para fechar o Emulador é apenas possivel via o controle oficial do emulador.
 
 ---
 
@@ -1141,19 +1149,9 @@ Além de executar jogos, a implementação busca explorar diretamente conceitos 
 
 Por esse motivo, diversas partes são implementadas explicitamente em vez de abstraídas por bibliotecas externas.
 
----
-
-# Aviso sobre ROMs
-
-Este repositório não inclui ROMs comerciais.
-
-Utilize apenas ROMs, homebrews ou dumps que você tenha autorização legal para utilizar.
-
----
-
 ## Status
 
-O projeto ainda **não deve ser considerado um emulador Game Boy completo ou cycle-accurate**.
+O projeto ainda **não deve ser considerado um emulador Game Boy COMPLETO ou cycle-accurate**.
 
 A implementação atual já possui uma base significativa de CPU, memória, MBC1, PPU, sprites, DMA, timers e interrupções, mas ainda existem diferenças de comportamento e timing que podem afetar a compatibilidade com determinados softwares.
 
