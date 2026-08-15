@@ -1095,11 +1095,8 @@ Uma possível ordem de evolução do projeto é:
 * validar Window e sprites contra test ROMs.
 
 ### 5. Cartridge
-
-* estabilizar MBC1;
 * implementar MBC2;
 * implementar MBC3 + RTC;
-* implementar MBC5;
 * interpretar corretamente ROM size e RAM size pelo header.
 
 ### 6. Infraestrutura
