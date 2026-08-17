@@ -166,6 +166,9 @@ double emulation_delay_target = 16.74;
 double emulation_delay_left = 0;
 int contador_emulation_delay_save = 0;
 int contador_quit_game = 0;
+
+bool render_in_2x_resolution = true;
+
 bool first_run_auto_save = true;
 bool vblank_start_joypad = true;
 
@@ -2650,6 +2653,56 @@ void render_to_lcd() {
     }
 }
 
+void render_to_lcd_2x() {
+    uint16_t x_lcd = 0, y_lcd=0;
+
+    SDL_Rect *rect = malloc(sizeof(SDL_Rect));
+    rect->h = 2;
+    rect->w = 2;
+    for (int i =0; i<144;i++) {
+        for (int j = 0; j<160;j++) {
+            switch (ppu.LCDscreen[i][j]) {
+                case 0b00: SDL_SetColor0(renderer); break;
+                case 0b01: SDL_SetColor1(renderer); break;
+                case 0b10: SDL_SetColor2(renderer); break;
+                case 0b11: SDL_SetColor3(renderer); break;
+            }
+            rect->x = x_lcd;
+            rect->y = y_lcd;
+            SDL_RenderDrawRect(renderer, rect);
+            x_lcd+=2;
+        }
+        x_lcd = 0;
+        y_lcd+=2;
+    }
+    free(rect);
+}
+
+/*
+
+void render_to_lcd_2x() {
+    uint16_t x_lcd = 0, y_lcd=0;
+    for (int i =0; i<144;i++) {
+        for (int j = 0; j<160;j++) {
+            switch (ppu.LCDscreen[i][j]) {
+                case 0b00: SDL_SetColor0(renderer); break;
+                case 0b01: SDL_SetColor1(renderer); break;
+                case 0b10: SDL_SetColor2(renderer); break;
+                case 0b11: SDL_SetColor3(renderer); break;
+            }
+            SDL_RenderDrawPoint(renderer, x_lcd , y_lcd);
+            SDL_RenderDrawPoint(renderer, x_lcd + 1, y_lcd);
+            SDL_RenderDrawPoint(renderer, x_lcd , y_lcd + 1);
+            SDL_RenderDrawPoint(renderer, x_lcd + 1, y_lcd + 1);
+            x_lcd+=2;
+        }
+        x_lcd = 0;
+        y_lcd+=2;
+    }
+}
+
+ */
+
 // primera etapa, busca na OAM da scanline atual
 /*.
 Byte   Attributes/Fags
@@ -3037,7 +3090,7 @@ void ppu_cycles_Verify() {
             set_ppu_mode(1);
             SDL_SetColor0(renderer);
             SDL_RenderClear(renderer);
-            render_to_lcd();
+            (render_in_2x_resolution)? render_to_lcd_2x() : render_to_lcd();
             SDL_RenderPresent(renderer);
             vblank_start_joypad = true;
             if (get_STAT_mode(4)) {
@@ -3075,7 +3128,7 @@ int main(int argc, char*argv[]) {
     // if (screen2 == NULL) {
     //     SDL_DestroyWindow(screen2);
     // }
-    SDL_CreateWindowAndRenderer(160, 244, SDL_WINDOW_SHOWN, &screen, &renderer);
+    (render_in_2x_resolution)? SDL_CreateWindowAndRenderer(160*2, 244*2, SDL_WINDOW_SHOWN, &screen, &renderer) : SDL_CreateWindowAndRenderer(160, 244, SDL_WINDOW_SHOWN, &screen, &renderer);
     if (screen == NULL) {
         SDL_DestroyWindow(screen);
     }
@@ -3102,8 +3155,6 @@ int main(int argc, char*argv[]) {
 
                 printf("| Current instruction: [>  %02x  <] | Register A: %02x | Register B: %02x | Register C: %02x | Register D: %02x | Register E: %02x | Register F: %02x | Register L: %02x | Register H: %02x |\n"
                                  "| Current PC:          [> %04x <] | Flag Z: %02x     | Flag N: %02x     | Flag H: %02x     | Flag C: %02x     |                |                |                |                |\n", read_from_memory_8bit(cpu.PC), cpu.A,cpu.B,cpu.C,cpu.D,cpu.E,cpu.F,cpu.L,cpu.H,cpu.PC, is_Z_flag_up(), is_N_flag_up(), is_H_flag_up(), is_C_flag_up());
-                // TODO(CPU): revisar o encadeamento abaixo; o segundo if possui um else próprio,
-                // TODO(CPU): então a CPU pode passar pelo bloco HALT e ainda executar uma instrução na mesma iteração.
                 if (cpu.is_halted) {
                     incrementar_ciclos(4);
                     cpu.only_waiting_for_interrupt_cond = !check_if_is_interrupted(true);
