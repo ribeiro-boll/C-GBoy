@@ -170,6 +170,9 @@ int contador_quit_game = 0;
 
 bool render_in_2x_resolution = true;
 
+bool emulation_2x_latch = false;
+bool emulation_2x = false;
+
 bool first_run_auto_save = true;
 bool vblank_start_joypad = true;
 
@@ -3045,8 +3048,10 @@ void ppu_cycles_Verify() {
 
         if (get_curr_LY() == 153) {
             contador_emulation_delay_save++;
-            emulation_delay_left = emulation_delay_target - cpu.time_elapsed;
-            if (emulation_delay_left > 0 && emulation_delay_left < emulation_delay_target) SDL_Delay(emulation_delay_left);
+            (emulation_2x) ? cpu.time_elapsed/=4 : cpu.time_elapsed;
+            if (emulation_2x) printf("foi!\n");
+            emulation_delay_left = cpu.time_elapsed - emulation_delay_target;
+            if (emulation_delay_left > 0 && emulation_delay_left < emulation_delay_target && !emulation_2x) SDL_Delay((long)emulation_delay_left);
             if (first_run_auto_save) {
                 if (contador_emulation_delay_save > 1200) {
                     printf("Auto save from cartram first run!!!...\n");
@@ -3233,11 +3238,9 @@ int main(int argc, char*argv[]) {
         while (1) {
             if (vblank_start_joypad) {
                 vblank_start_joypad = false;
-
                 //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
-
                     if (event.type == SDL_KEYUP) {
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
@@ -3262,6 +3265,12 @@ int main(int argc, char*argv[]) {
                                 // botão select
                             case SDLK_x:
                                 on_start_button = false; break;
+                            case SDLK_f:
+                                if (emulation_2x_latch) {
+                                    if (emulation_2x) emulation_2x =  false;
+                                    else emulation_2x = true;
+                                }
+                                emulation_2x_latch = false; break;
                                 //botão start
                         }
                     }
@@ -3290,6 +3299,8 @@ int main(int argc, char*argv[]) {
                             case SDLK_x:
                                 on_start_button = true; break;
                                 //botão start
+                            case SDLK_f:
+                                emulation_2x_latch = true; break;
                             case SDLK_ESCAPE:
                                 contador_quit_game++;
                                 if (contador_quit_game>=2) {
