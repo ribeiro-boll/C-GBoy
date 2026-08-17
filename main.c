@@ -144,6 +144,7 @@ typedef struct GB_PPU {
     // TODO(PPU): tile_data/background/window e current_y_from_tiles podem deixar de existir.
     uint8_t current_LY_from_window;
     uint8_t current_LY;
+    SDL_Rect debug_rec_screen[144][160];
     uint8_t LCDscreen[144][160];
     uint8_t LCDscreen_pixel_color[144][160];
     Sprite sprite_bank[10];
@@ -2625,6 +2626,45 @@ void clear_registers() {
     cpu.DMA_transfer_curr_addr = 0;
     cpu.DMA_transfer_limit_addr = 0;
     cpu.DMA_transfer_OAM_addr = 0xFE00;
+    /*
+    void render_to_lcd_2x() {
+    uint16_t x_lcd = 0, y_lcd=0;
+
+    SDL_Rect *rect = malloc(sizeof(SDL_Rect));
+    rect->h = 2;
+    rect->w = 2;
+    for (int i =0; i<144;i++) {
+        for (int j = 0; j<160;j++) {
+            switch (ppu.LCDscreen[i][j]) {
+                case 0b00: SDL_SetColor0(renderer); break;
+                case 0b01: SDL_SetColor1(renderer); break;
+                case 0b10: SDL_SetColor2(renderer); break;
+                case 0b11: SDL_SetColor3(renderer); break;
+            }
+            rect->x = x_lcd;
+            rect->y = y_lcd;
+            SDL_RenderDrawRect(renderer, rect);
+            x_lcd+=2;
+        }
+        x_lcd = 0;
+        y_lcd+=2;
+    }
+    free(rect);
+}
+    */
+    uint16_t x_lcd = 0, y_lcd=0;
+    for (int i = 0; i<144;i++) {
+        for (int j = 0; j<160;j++) {
+            ppu.debug_rec_screen[i][j].h = 2;
+            ppu.debug_rec_screen[i][j].w = 2;
+            ppu.debug_rec_screen[i][j].x = x_lcd;
+            ppu.debug_rec_screen[i][j].y = y_lcd;
+            x_lcd+=2;
+        }
+        SDL_RenderDrawRects(renderer, ppu.debug_rec_screen[i], 160);
+        x_lcd = 0;
+        y_lcd+=2;
+    }
     write_into_memory_8bit(0xFF40, 0x91);
 }
 void SDL_SetColor0(SDL_Renderer *renderer) {
@@ -2654,11 +2694,6 @@ void render_to_lcd() {
 }
 
 void render_to_lcd_2x() {
-    uint16_t x_lcd = 0, y_lcd=0;
-
-    SDL_Rect *rect = malloc(sizeof(SDL_Rect));
-    rect->h = 2;
-    rect->w = 2;
     for (int i =0; i<144;i++) {
         for (int j = 0; j<160;j++) {
             switch (ppu.LCDscreen[i][j]) {
@@ -2667,15 +2702,9 @@ void render_to_lcd_2x() {
                 case 0b10: SDL_SetColor2(renderer); break;
                 case 0b11: SDL_SetColor3(renderer); break;
             }
-            rect->x = x_lcd;
-            rect->y = y_lcd;
-            SDL_RenderDrawRect(renderer, rect);
-            x_lcd+=2;
+            SDL_RenderFillRect(renderer, &ppu.debug_rec_screen[i][j]);
         }
-        x_lcd = 0;
-        y_lcd+=2;
     }
-    free(rect);
 }
 
 /*
