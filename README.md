@@ -194,7 +194,7 @@ A partir daqui, cada subsistema é detalhado individualmente nas próximas seç�
 
 A versão compilada para Windows pode ser obtida pela página de releases do projeto.
 
-**Download atual:** [C-GBoy v0.1.2 para Windows](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.2/gameboy-windows.zip)
+**Download atual:** [C-GBoy v0.1.2 para Windows](https://github.com/ribeiro-boll/C-GBoy/releases/download/v0.1.3/gameboy-windows.zip)
 
 ## 1. Baixando e extraindo
 
