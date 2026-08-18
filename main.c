@@ -173,6 +173,9 @@ bool render_in_2x_resolution = true;
 bool emulation_2x_latch = false;
 bool emulation_2x = false;
 
+bool close_latch = false;
+bool close_gb = false;
+
 bool first_run_auto_save = true;
 bool vblank_start_joypad = true;
 
@@ -3254,6 +3257,14 @@ int main(int argc, char*argv[]) {
                 //printf("FFCC = %02X\n", read_from_memory_8bit(0xFFCC));
                 //printf("FF8C = %02X | FFC0 = %02X | FF91 = %02X\n ", read_from_memory_8bit(0xFF8C),read_from_memory_8bit(0xFFc0), read_from_memory_8bit(0xFF91));
                 while (SDL_PollEvent(&event)) {
+                    if (event.type == SDL_QUIT) {
+                        persist_save_game_on_exit();
+                        free(memory.game_rom);
+                        //free(cpu.game_file);
+                        SDL_DestroyWindow(screen);
+                        SDL_Quit();
+                        exit(0);
+                    }
                     if (event.type == SDL_KEYUP) {
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
@@ -3288,6 +3299,7 @@ int main(int argc, char*argv[]) {
                         }
                     }
                     if (event.type == SDL_KEYDOWN) {
+
                         switch (event.key.keysym.sym) {
                             case SDLK_LEFT:
                                 on_left_button = true; break;
