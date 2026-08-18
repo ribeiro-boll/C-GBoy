@@ -2614,6 +2614,8 @@ void clear_registers() {
     cpu.contador_ciclos = 0;
     cpu.contador_ciclos_div = 0;
     cpu.contador_ciclos_tima = 0;
+    cpu.time_elapsed = 0;
+
     ppu.contador_ciclos=0;
     ppu.current_LY=0;
     ppu.current_mode=0;
@@ -2708,6 +2710,17 @@ void render_to_lcd_2x() {
             SDL_RenderFillRect(renderer, &ppu.debug_rec_screen[i][j]);
         }
     }
+    // if (emulation_2x) {
+    //     SDL_SetColor3(renderer);
+    //     uint16_t y_coord = 144 * 2 + 50;
+    //     SDL_Rect r;
+    //     r.h = 50;
+    //     r.w = 50;
+    //     r.x = 160-25;
+    //     r.y = y_coord;
+    //     SDL_RenderDrawRect(renderer, &r);
+    //     SDL_RenderFillRect(renderer, &r);
+    // }
 }
 
 /*
@@ -2730,7 +2743,7 @@ void render_to_lcd_2x() {
         }
         x_lcd = 0;
         y_lcd+=2;
-    }
+        }
 }
 
  */
@@ -3048,10 +3061,10 @@ void ppu_cycles_Verify() {
 
         if (get_curr_LY() == 153) {
             contador_emulation_delay_save++;
-            (emulation_2x) ? cpu.time_elapsed/=4 : cpu.time_elapsed;
-            if (emulation_2x) printf("foi!\n");
+            //if (emulation_2x) printf("foi!\n");
             emulation_delay_left = cpu.time_elapsed - emulation_delay_target;
             if (emulation_delay_left > 0 && emulation_delay_left < emulation_delay_target && !emulation_2x) SDL_Delay((long)emulation_delay_left);
+            //printf("Emulation Delay: %li | fast_enabled: %d\n",(long) emulation_delay_left, emulation_2x);
             if (first_run_auto_save) {
                 if (contador_emulation_delay_save > 1200) {
                     printf("Auto save from cartram first run!!!...\n");
